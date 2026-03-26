@@ -324,6 +324,22 @@ cd d:\4C
 
 ## 📚 扩展方向
 
+### 🤖 AI 应用扩展（推荐使用 Dify）
+
+- **适用场景**：课堂助教（Q&A）、实验报告润色/批改建议、传感器数据趋势解读、教学内容快速检索、植物养护建议。
+- **推荐方案**：自托管一套 Dify，作为 LLM 编排与知识库平台；FastAPI 作为“中间层”封装 Dify 的对话/工作流接口，前端通过现有 `frontend/src/api` 客户端调用。
+- **接入步骤**
+  1. **部署 Dify**：按照官方 `docker-compose` 一键部署（内网即可），配置模型供应商（如通义千问、OpenAI、Azure OpenAI 等）与向量库。
+  2. **准备知识库**：将“教学内容、实验任务说明、历史实验报告示例、传感器导出数据摘要”整理为 Markdown/CSV 上传到 Dify Dataset；或在 Dify Workflow 中使用 **HTTP 请求节点** 调用现有 FastAPI 接口（如 `/api/assignments`、`/api/history/{device_id}`）实时取数。
+  3. **设计应用/流程**：在 Dify 创建 Chatflow/Workflow，增加工具节点：
+     - **检索工具**：连接 Dataset 做语义检索。
+     - **实时数据工具**：HTTP 节点调用本项目 API 获取当前设备/植物数据。
+     - **角色/权限上下文**：把用户角色、班级、设备 ID 作为 workflow 输入，限制回答范围。
+  4. **后端封装**：在 FastAPI 新增轻量接口（示例命名：`POST /api/ai/chat` 或 `/api/ai/report-review`），读取 `DIFY_API_BASE_URL`、`DIFY_API_KEY` 环境变量，转发到 Dify 的 Completion/Workflow API，并透传用户上下文；建议使用 SSE/流式转发提升体验。
+  5. **前端调用**：复用现有 axios 客户端，在 `frontend/src/api` 中新增对应方法，支持流式输出；UI 可沿用评论/问答或报告详情的交互布局。
+- **安全与运维**：对转发接口开启鉴权与频控；不要在前端暴露 Dify Key；开启审计日志，避免模型误用；为 Dify 服务和本项目设置独立网络与环境变量。
+- **如果不使用 Dify**：可用 LangChain/FastAPI 直接对接模型，但需要自行处理对话状态、工具调用和向量检索，开发与运维成本更高，故优先推荐 Dify。
+
 ### 已完成功能
 1. ✅ 数据导出（CSV/Excel）
 2. ✅ 教学内容管理（分类、内容、发布）
