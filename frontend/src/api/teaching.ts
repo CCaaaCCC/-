@@ -13,6 +13,8 @@ export {
     completeLearning,
     getComments,
     addComment,
+    replyComment,
+    toggleCommentLike,
     getLearningStats,
     getStudentsProgress,
     getAssignments,

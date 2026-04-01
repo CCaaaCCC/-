@@ -1,0 +1,737 @@
+[
+  {
+    "name": "anonymous_public_display",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "device": {
+        "id": 1,
+        "name": "Default greenhouse",
+        "status": 1,
+        "pump_state": 0,
+        "fan_state": 0,
+        "light_state": 0
+      },
+      "telemetry": {
+        "temp": 32.57,
+        "humidity": 45.5,
+        "soil_moisture": 39.84,
+        "light": 428.0,
+        "timestamp": "2026-04-01T05:28:07"
+      },
+      "plants": [
+        {
+          "id": 1,
+          "name": "测试植物",
+          "species": "番茄",
+          "status": "growing"
+        },
+        {
+          "id": 2,
+          "name": "番茄01",
+          "species": "樱桃番茄",
+          "status": "growing"
+        },
+        {
+          "id": 3,
+          "name": "2",
+          "species": "23",
+          "status": "growing"
+        },
+        {
+          "id": 4,
+          "name": "43",
+          "species": "43",
+          "status": "growing"
+        }
+      ],
+      "recent_records": [
+        {
+          "id": 1,
+          "plant_name": "43",
+          "record_date": "2026-03-26",
+          "stage": "seedling",
+          "height_cm": 2.0,
+          "leaf_count": 1
+        }
+      ]
+    }
+  },
+  {
+    "name": "anonymous_devices_forbidden",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "Not authenticated"
+    }
+  },
+  {
+    "name": "login_admin",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImV4cCI6MTc3NTAyMzA5M30.wz4lJzlCwB57KXT0g8v907tO5O0fIBKEULxrWSoI-MQ",
+      "token_type": "bearer",
+      "role": "admin"
+    }
+  },
+  {
+    "name": "login_teacher",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZWFjaGVyIiwicm9sZSI6InRlYWNoZXIiLCJleHAiOjE3NzUwMjMwOTN9.FWM8OOl4nKcfS3oro35bYwUxcVy9k3Dk64jmxF64f64",
+      "token_type": "bearer",
+      "role": "teacher"
+    }
+  },
+  {
+    "name": "login_student",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdHVkZW50Iiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NzUwMjMwOTN9._2s7Pc2qOfCEEJ4G38hTEQhbfvl9iZx7lroWzJx5pqU",
+      "token_type": "bearer",
+      "role": "student"
+    }
+  },
+  {
+    "name": "profile_admin",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "id": 1,
+      "username": "admin",
+      "role": "admin",
+      "real_name": "管理员",
+      "avatar_url": null,
+      "email": "example@email.com",
+      "class_id": null,
+      "class_name": null,
+      "todos": {
+        "pending_assignments": 0,
+        "overdue_assignments": 0,
+        "assignments_to_grade": 1,
+        "plants_in_class": 5
+      },
+      "upcoming_assignments": [
+        {
+          "title": "UX闭环测试任务-035710",
+          "description": "自动探测脚本创建",
+          "device_id": 1,
+          "class_id": 4,
+          "start_date": "2026-03-31T03:57:10",
+          "due_date": "2026-04-02T03:57:10",
+          "requirement": "观察并记录环境变化",
+          "template": null,
+          "is_published": true,
+          "id": 11,
+          "teacher_id": 2,
+          "teacher_name": null,
+          "device_name": null,
+          "class_name": "一年级11班",
+          "created_at": "2026-03-30T19:57:11",
+          "submission_count": 0
+        },
+        {
+          "title": "UX闭环测试任务-035736",
+          "description": "自动探测脚本创建",
+          "device_id": 1,
+          "class_id": 4,
+          "start_date": "2026-03-31T03:57:36",
+          "due_date": "2026-04-02T03:57:36",
+          "requirement": "观察并记录环境变化",
+          "template": null,
+          "is_published": true,
+          "id": 12,
+          "teacher_id": 2,
+          "teacher_name": null,
+          "device_name": null,
+          "class_name": "一年级11班",
+          "created_at": "2026-03-30T19:57:36",
+          "submission_count": 0
+        },
+        {
+          "title": "UX闭环测试任务-041056",
+          "description": "自动探测脚本创建",
+          "device_id": 1,
+          "class_id": 4,
+          "start_date": "2026-03-31T04:10:56",
+          "due_date": "2026-04-02T04:10:56",
+          "requirement": "观察并记录环境变化",
+          "template": null,
+          "is_published": true,
+          "id": 13,
+          "teacher_id": 2,
+          "teacher_name": null,
+          "device_name": null,
+          "class_name": "一年级11班",
+          "created_at": "2026-03-30T20:10:57",
+          "submission_count": 0
+        },
+        {
+          "title": "观察温度对植物生长的影响",
+          "description": "123",
+          "device_id": 1,
+          "class_id": 4,
+          "start_date": "2026-04-01T11:30:43",
+          "due_date": "2026-06-05T00:00:00",
+          "requirement": "123",
+          "template": null,
+          "is_published": true,
+          "id": 18,
+          "teacher_id": 1,
+          "teacher_name": null,
+          "device_name": null,
+          "class_name": "一年级11班",
+          "created_at": "2026-04-01T03:30:50",
+          "submission_count": 0
+        }
+      ]
+    }
+  },
+  {
+    "name": "profile_teacher",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "id": 2,
+      "username": "teacher",
+      "role": "teacher",
+      "real_name": "详",
+      "avatar_url": null,
+      "email": "13232",
+      "class_id": null,
+      "class_name": "三年级 1 班, 三年级 2 班, 四年级 1 班",
+      "todos": {
+        "pending_assignments": 0,
+        "overdue_assignments": 0,
+        "assignments_to_grade": 0,
+        "plants_in_class": 1
+      },
+      "upcoming_assignments": []
+    }
+  },
+  {
+    "name": "profile_student",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "id": 3,
+      "username": "student",
+      "role": "student",
+      "real_name": "alian",
+      "avatar_url": null,
+      "email": "230407022@stumail.qztc.edu.cn",
+      "class_id": 4,
+      "class_name": "一年级11班",
+      "todos": {
+        "pending_assignments": 0,
+        "overdue_assignments": 0,
+        "assignments_to_grade": 3,
+        "plants_in_class": 4
+      },
+      "upcoming_assignments": []
+    }
+  },
+  {
+    "name": "student_cannot_get_users",
+    "status": 403,
+    "expected": [
+      403
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "权限不足：仅管理员可执行此操作"
+    }
+  },
+  {
+    "name": "teacher_cannot_create_users",
+    "status": 403,
+    "expected": [
+      403
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "权限不足：仅管理员可执行此操作"
+    }
+  },
+  {
+    "name": "student_cannot_control_device",
+    "status": 403,
+    "expected": [
+      403
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "权限不足：仅教师或管理员可执行此操作"
+    }
+  },
+  {
+    "name": "teacher_can_control_device",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "status": "success",
+      "device_id": 1
+    }
+  },
+  {
+    "name": "admin_get_users_paginated",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "items": [
+        {
+          "id": 12,
+          "username": "tmpdel_1774936333",
+          "role": "student",
+          "email": null,
+          "real_name": null,
+          "student_id": null,
+          "teacher_id": null,
+          "class_id": null,
+          "is_active": false,
+          "created_at": "2026-03-31T05:52:14",
+          "updated_at": "2026-03-31T06:06:32",
+          "class_name": null
+        },
+        {
+          "id": 10,
+          "username": "smoke_teacher",
+          "role": "teacher",
+          "email": null,
+          "real_name": null,
+          "student_id": null,
+          "teacher_id": null,
+          "class_id": 1,
+          "is_active": true,
+          "created_at": "2026-03-26T17:38:15",
+          "updated_at": "2026-03-31T05:31:19",
+          "class_name": "三年级 1 班"
+        },
+        {
+          "id": 11,
+          "username": "smoke_student",
+          "role": "student",
+          "email": null,
+          "real_name": null,
+          "student_id": null,
+          "teacher_id": null,
+          "class_id": 1,
+          "is_active": true,
+          "created_at": "2026-03-26T17:38:15",
+          "updated_at": "2026-03-31T05:31:19",
+          "class_name": "三年级 1 班"
+        },
+        {
+          "id": 9,
+          "username": "testadmin",
+          "role": "admin",
+          "email": null,
+          "real_name": null,
+          "student_id": null,
+          "teacher_id": null,
+          "class_id": null,
+          "is_active": true,
+          "created_at": "2026-03-26T16:44:18",
+          "updated_at": "2026-03-31T05:31:19",
+          "class_name": null
+        },
+        {
+          "id": 8,
+          "username": "X2233",
+          "role": "teacher",
+          "email": "xiezhuochen2233@outlook.com",
+          "real_name": "外星人",
+          "student_id": null,
+          "teacher_id": "2222",
+          "class_id": null,
+          "is_active": true,
+          "created_at": "2026-03-25T07:15:48",
+          "updated_at": "2026-03-31T05:31:19",
+          "class_name": null
+        },
+        {
+          "id": 1,
+          "username": "admin",
+          "role": "admin",
+          "email": "example@email.com",
+          "real_name": "管理员",
+          "student_id": null,
+          "teacher_id": null,
+          "class_id": null,
+          "is_active": true,
+          "created_at": "2026-03-24T01:26:13",
+          "updated_at": "2026-04-01T05:26:17",
+          "class_name": null
+        },
+        {
+          "id": 2,
+          "username": "teacher",
+          "role": "teacher",
+          "email": "13232",
+          "real_name": "详",
+          "student_id": null,
+          "teacher_id": "223432",
+          "class_id": null,
+          "is_active": true,
+          "created_at": "2026-03-24T01:26:13",
+          "updated_at": "2026-04-01T05:26:17",
+          "class_name": null
+        },
+        {
+          "id": 3,
+          "username": "student",
+          "role": "student",
+          "email": "230407022@stumail.qztc.edu.cn",
+          "real_name": "alian",
+          "student_id": "240407023",
+          "teacher_id": null,
+          "class_id": 4,
+          "is_active": true,
+          "created_at": "2026-03-24T01:26:13",
+          "updated_at": "2026-04-01T05:26:17",
+          "class_name": "一年级11班"
+        },
+        {
+          "id": 4,
+          "username": "_240407022",
+          "role": "student",
+          "email": "",
+          "real_name": "谢卓辰",
+          "student_id": "24040702233",
+          "teacher_id": null,
+          "class_id": 4,
+          "is_active": true,
+          "created_at": "2026-03-23T17:53:22",
+          "updated_at": "2026-03-31T05:31:19",
+          "class_name": "一年级11班"
+        }
+      ],
+      "total": 9,
+      "page": 1,
+      "page_size": 20
+    }
+  },
+  {
+    "name": "teacher_create_assignment",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "title": "UX闭环测试任务-132813",
+      "description": "自动探测脚本创建",
+      "device_id": 1,
+      "class_id": 4,
+      "start_date": "2026-04-01T13:28:13",
+      "due_date": "2026-04-03T13:28:13",
+      "requirement": "观察并记录环境变化",
+      "template": null,
+      "is_published": true,
+      "id": 19,
+      "teacher_id": 2,
+      "teacher_name": "详",
+      "device_name": "Default greenhouse",
+      "class_name": "一年级11班",
+      "created_at": "2026-04-01T05:28:14",
+      "submission_count": 0
+    }
+  },
+  {
+    "name": "student_list_assignments",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": [
+      {
+        "title": "UX闭环测试任务-132813",
+        "description": "自动探测脚本创建",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-04-01T13:28:13",
+        "due_date": "2026-04-03T13:28:13",
+        "requirement": "观察并记录环境变化",
+        "template": null,
+        "is_published": true,
+        "id": 19,
+        "teacher_id": 2,
+        "teacher_name": "详",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "created_at": "2026-04-01T05:28:14",
+        "submission_count": 0
+      },
+      {
+        "title": "观察温度对植物生长的影响",
+        "description": "123",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-04-01T11:30:43",
+        "due_date": "2026-06-05T00:00:00",
+        "requirement": "123",
+        "template": null,
+        "is_published": true,
+        "id": 18,
+        "teacher_id": 1,
+        "teacher_name": "管理员",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "created_at": "2026-04-01T03:30:50",
+        "submission_count": 1
+      },
+      {
+        "title": "UX闭环测试任务-041056",
+        "description": "自动探测脚本创建",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-03-31T04:10:56",
+        "due_date": "2026-04-02T04:10:56",
+        "requirement": "观察并记录环境变化",
+        "template": null,
+        "is_published": true,
+        "id": 13,
+        "teacher_id": 2,
+        "teacher_name": "详",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "created_at": "2026-03-30T20:10:57",
+        "submission_count": 1
+      },
+      {
+        "title": "UX闭环测试任务-035736",
+        "description": "自动探测脚本创建",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-03-31T03:57:36",
+        "due_date": "2026-04-02T03:57:36",
+        "requirement": "观察并记录环境变化",
+        "template": null,
+        "is_published": true,
+        "id": 12,
+        "teacher_id": 2,
+        "teacher_name": "详",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "created_at": "2026-03-30T19:57:36",
+        "submission_count": 1
+      },
+      {
+        "title": "UX闭环测试任务-035710",
+        "description": "自动探测脚本创建",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-03-31T03:57:10",
+        "due_date": "2026-04-02T03:57:10",
+        "requirement": "观察并记录环境变化",
+        "template": null,
+        "is_published": true,
+        "id": 11,
+        "teacher_id": 2,
+        "teacher_name": "详",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "created_at": "2026-03-30T19:57:11",
+        "submission_count": 1
+      }
+    ]
+  },
+  {
+    "name": "student_submit_assignment",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "experiment_date": "2026-04-01",
+      "observations": "温度较稳定，土壤湿度略降。",
+      "conclusion": "建议增加短时补水。",
+      "id": 9,
+      "assignment_id": 19,
+      "student_id": 3,
+      "student_name": null,
+      "status": "submitted",
+      "temp_records": null,
+      "humidity_records": null,
+      "soil_moisture_records": null,
+      "light_records": null,
+      "photos": null,
+      "score": null,
+      "teacher_comment": null,
+      "report_file_name": null,
+      "report_file_path": null,
+      "report_file_size": null,
+      "graded_at": null,
+      "submitted_at": "2026-04-01T05:28:14",
+      "created_at": "2026-04-01T05:28:14",
+      "updated_at": "2026-04-01T05:28:14"
+    }
+  },
+  {
+    "name": "teacher_get_submissions",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": [
+      {
+        "experiment_date": "2026-04-01",
+        "observations": "温度较稳定，土壤湿度略降。",
+        "conclusion": "建议增加短时补水。",
+        "id": 9,
+        "assignment_id": 19,
+        "student_id": 3,
+        "student_name": "student",
+        "status": "submitted",
+        "temp_records": null,
+        "humidity_records": null,
+        "soil_moisture_records": null,
+        "light_records": null,
+        "photos": null,
+        "score": null,
+        "teacher_comment": null,
+        "report_file_name": null,
+        "report_file_path": null,
+        "report_file_size": null,
+        "graded_at": null,
+        "submitted_at": "2026-04-01T05:28:14",
+        "created_at": "2026-04-01T05:28:14",
+        "updated_at": "2026-04-01T05:28:14"
+      }
+    ]
+  },
+  {
+    "name": "teacher_grade_submission",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "message": "批改完成"
+    }
+  },
+  {
+    "name": "student_get_my_submission",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "experiment_date": "2026-04-01",
+      "observations": "温度较稳定，土壤湿度略降。",
+      "conclusion": "建议增加短时补水。",
+      "id": 9,
+      "assignment_id": 19,
+      "student_id": 3,
+      "student_name": "student",
+      "status": "graded",
+      "temp_records": null,
+      "humidity_records": null,
+      "soil_moisture_records": null,
+      "light_records": null,
+      "photos": null,
+      "score": 92.0,
+      "teacher_comment": "记录完整，结论清晰",
+      "report_file_name": null,
+      "report_file_path": null,
+      "report_file_size": null,
+      "graded_at": "2026-04-01T05:28:14",
+      "submitted_at": "2026-04-01T05:28:14",
+      "created_at": "2026-04-01T05:28:14",
+      "updated_at": "2026-04-01T05:28:14"
+    }
+  },
+  {
+    "name": "student_export_unbound_device_forbidden",
+    "status": 403,
+    "expected": [
+      403
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "无权导出此设备数据（非本班设备）"
+    }
+  },
+  {
+    "name": "teacher_export_invalid_date_format",
+    "status": 400,
+    "expected": [
+      400
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "日期格式错误，请使用 YYYY-MM-DD 格式"
+    }
+  },
+  {
+    "name": "teacher_export_range_over_31_days",
+    "status": 400,
+    "expected": [
+      400
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "日期范围不能超过 31 天"
+    }
+  },
+  {
+    "name": "ai_assistant_response",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "answer": "你的问题是：请判断当前环境是否适宜植物生长。结合当前大棚数据，我的结论是：光照较弱，植物光合作用效率可能不足。",
+      "source": "rule-based"
+    }
+  },
+  {
+    "name": "student_get_groups",
+    "status": 200,
+    "expected": [
+      200,
+      403
+    ],
+    "pass": true,
+    "payload": []
+  }
+]

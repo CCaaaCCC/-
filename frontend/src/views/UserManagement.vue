@@ -7,7 +7,7 @@
         <el-tag :type="roleTagType" size="large">{{ userRoleText }}</el-tag>
       </div>
       <div class="header-right">
-        <el-button @click="$router.push('/')">🏠 返回大棚监控</el-button>
+        <el-button @click="$router.push('/')">🏠 返回工作台</el-button>
         <el-button type="danger" plain @click="handleLogout">退出登录</el-button>
       </div>
     </div>
@@ -132,7 +132,7 @@
           </div>
           
           <div class="toolbar-actions">
-            <el-button @click="exportUsers">
+            <el-button :loading="exporting" :disabled="exporting" @click="handleExportUsers">
               <el-icon><Download /></el-icon> 导出
             </el-button>
             <el-button @click="showImportDialog = true">
@@ -156,7 +156,7 @@
           <template #default>
             <div class="batch-actions">
               <el-button size="small" type="danger" @click="batchDelete">
-                <el-icon><Delete /></el-icon> 批量删除
+                <el-icon><Delete /></el-icon> 批量禁用
               </el-button>
               <el-button size="small" type="warning" @click="showBatchResetPwd = true">
                 <el-icon><Key /></el-icon> 批量重置密码
@@ -210,6 +210,19 @@
               </template>
             </el-table-column>
           </el-table>
+          
+          <!-- 分页 -->
+          <div class="pagination-container" style="margin-top: 20px; text-align: right">
+            <el-pagination
+              v-model:current-page="pagination.page"
+              v-model:page-size="pagination.page_size"
+              :page-sizes="[20, 50, 100, 200]"
+              layout="total, sizes, prev, pager, next, jumper"
+              :total="total"
+              @size-change="loadUsers"
+              @current-change="loadUsers"
+            />
+          </div>
         </el-card>
       </div>
     </div>
@@ -437,7 +450,7 @@ import {
   toggleUserActive,
   getUserStats,
   importUsers,
-  exportUsers,
+  exportUsers as exportUsersApi,
   getClasses,
   createClass,
   batchDeleteUsers,
@@ -483,6 +496,13 @@ const activeClassId = ref(0);
 // 用户列表
 const users = ref<User[]>([]);
 const loading = ref(false);
+const total = ref(0);
+
+// 分页
+const pagination = ref({
+  page: 1,
+  page_size: 20
+});
 
 // 批量选择
 const selectedUserIds = ref<number[]>([]);
@@ -532,6 +552,14 @@ const userFormRules = reactive<FormRules>({
 const showImportDialog = ref(false);
 const importFile = ref<File | null>(null);
 const importing = ref(false);
+const exporting = ref(false);
+
+const toLocalDateString = (input: Date = new Date()) => {
+  const y = input.getFullYear();
+  const m = `${input.getMonth() + 1}`.padStart(2, '0');
+  const d = `${input.getDate()}`.padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
 
 // 重置密码对话框
 const showResetDialog = ref(false);
@@ -556,16 +584,16 @@ const batchResetForm = ref({
 const loadStats = async () => {
   try {
     stats.value = await getUserStats();
-  } catch (error) {
-    console.error('加载统计失败:', error);
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '加载统计失败');
   }
 };
 
 const loadClasses = async () => {
   try {
     classes.value = await getClasses({ is_active: true });
-  } catch (error) {
-    console.error('加载班级失败:', error);
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '加载班级失败');
   }
 };
 
@@ -574,7 +602,12 @@ const loadUsers = async () => {
   try {
     const params: any = { ...filterForm.value };
     if (searchQuery.value) params.search = searchQuery.value;
-    users.value = await getUsers(params);
+    params.page = pagination.value.page;
+    params.page_size = pagination.value.page_size;
+    
+    const response = await getUsers(params);
+    users.value = response.items || [];
+    total.value = response.total || 0;
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '加载用户失败');
   } finally {
@@ -668,9 +701,9 @@ const submitUser = async () => {
 
 const confirmDelete = async (id: number) => {
   try {
-    await ElMessageBox.confirm('确定要删除此用户吗？', '确认删除', { type: 'warning' });
+    await ElMessageBox.confirm('确定要彻底删除此用户吗？删除后不可恢复。', '确认删除', { type: 'warning' });
     await deleteUser(id);
-    ElMessage.success('删除成功');
+    ElMessage.success('用户已删除');
     loadUsers();
     loadStats();
   } catch (error: any) {
@@ -689,22 +722,22 @@ const batchDelete = async () => {
 
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedUserIds.value.length} 个用户吗？删除后无法恢复！`,
-      '确认批量删除',
+      `确定要禁用选中的 ${selectedUserIds.value.length} 个用户吗？`,
+      '确认批量禁用',
       { type: 'warning' }
     );
     
     const result = await batchDeleteUsers(selectedUserIds.value);
     ElMessage.success(result.message);
     if (result.failed_users && result.failed_users.length > 0) {
-      ElMessage.warning(`以下用户删除失败：${result.failed_users.map((u: any) => u.username).join(', ')}`);
+      ElMessage.warning(`以下用户禁用失败：${result.failed_users.map((u: any) => u.username || u.user_id).join(', ')}`);
     }
     clearSelection();
     loadUsers();
     loadStats();
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error(error.response?.data?.detail || '批量删除失败');
+      ElMessage.error(error.response?.data?.detail || '批量禁用失败');
     }
   }
 };
@@ -833,13 +866,18 @@ const submitImport = async () => {
   }
 };
 
-const exportUsers = async () => {
+const handleExportUsers = async () => {
+  if (exporting.value) {
+    return;
+  }
+
+  exporting.value = true;
   try {
-    const blob = await exportUsers();
+    const { blob, filename } = await exportUsersApi();
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `用户列表_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = filename || `用户列表_${toLocalDateString()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -847,6 +885,8 @@ const exportUsers = async () => {
     ElMessage.success('导出成功');
   } catch (error: any) {
     ElMessage.error('导出失败');
+  } finally {
+    exporting.value = false;
   }
 };
 

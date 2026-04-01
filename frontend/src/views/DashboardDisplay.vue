@@ -4,10 +4,20 @@
     <div class="top-bar">
       <h1>🌿 智慧大棚物联网监控中心</h1>
       <div class="top-info">
+        <span class="device">设备 #{{ activeDeviceId }}</span>
         <span class="date">{{ currentDate }}</span>
         <span class="time">{{ currentTime }}</span>
+        <span class="sync">{{ lastSyncText }}</span>
       </div>
     </div>
+
+    <el-alert
+      class="status-alert"
+      :type="displayStatusType"
+      :title="displayStatusText"
+      show-icon
+      :closable="false"
+    />
 
     <!-- 主要内容 -->
     <div class="main-content" v-loading="loading">
@@ -126,19 +136,53 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
-import * as echarts from 'echarts';
-import type { ECharts } from 'echarts';
+import { ref, onMounted, onUnmounted } from 'vue';
+import { useRoute } from 'vue-router';
+import { init, use, graphic } from 'echarts/core';
+import { LineChart } from 'echarts/charts';
+import { GridComponent, TooltipComponent, TitleComponent } from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+import type { ECharts } from 'echarts/core';
 import api from '../api/index';
+
+use([LineChart, GridComponent, TooltipComponent, TitleComponent, CanvasRenderer]);
+
+const route = useRoute();
+
+type DisplayStatus = 'success' | 'warning' | 'error';
+
+const activeDeviceId = ref(1);
+const displayStatusType = ref<DisplayStatus>('warning');
+const displayStatusText = ref('正在连接数据源...');
+const lastSyncText = ref('尚未同步');
+
+const setDisplayStatus = (type: DisplayStatus, text: string) => {
+  displayStatusType.value = type;
+  displayStatusText.value = text;
+};
 
 // 使用公开 API，无需认证
 const fetchDisplayData = async () => {
   try {
-    const response = await api.get('/public/display');
+    const response = await api.get('/public/display', {
+      params: { device_id: activeDeviceId.value }
+    });
     return response.data;
   } catch (error) {
-    console.error('获取大屏数据失败:', error);
+    setDisplayStatus('error', '实时数据获取失败，正在等待重试...');
     return null;
+  }
+};
+
+const fetchDisplayHistory = async () => {
+  try {
+    const response = await api.get(`/public/history/${activeDeviceId.value}`, {
+      params: { limit: 20 }
+    });
+    return Array.isArray(response.data) ? response.data : [];
+  } catch (error) {
+    setDisplayStatus('warning', '历史趋势数据暂不可用，正在重试...');
+    return [];
   }
 };
 
@@ -182,8 +226,62 @@ let humidityChartInstance: ECharts | null = null;
 // 全屏
 const isFullscreen = ref(false);
 
-// 计算属性
-const deviceId = 1; // 默认设备 ID
+const buildAxisFromHistory = (rows: any[]) => {
+  const ordered = [...rows].reverse();
+  const times = ordered.map((r: any) => {
+    const date = r.timestamp ? new Date(r.timestamp) : null;
+    if (!date || Number.isNaN(date.getTime())) return '--:--';
+    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  });
+  const temps = ordered.map((r: any) => Number(r.temp ?? 0));
+  const humidities = ordered.map((r: any) => Number(r.humidity ?? 0));
+  return { times, temps, humidities };
+};
+
+const updateChartsFromHistory = (rows: any[]) => {
+  if (!tempChartInstance || !humidityChartInstance) return;
+  const { times, temps, humidities } = buildAxisFromHistory(rows);
+
+  tempChartInstance.setOption({
+    title: { text: '温度变化', left: 'center', textStyle: { color: '#333', fontSize: 14 } },
+    tooltip: { trigger: 'axis' },
+    grid: { top: 40, bottom: 30, left: 50, right: 20 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 45 } },
+    yAxis: { type: 'value', name: '°C', axisLabel: { formatter: '{value}°C' } },
+    series: [{
+      type: 'line',
+      data: temps,
+      smooth: true,
+      itemStyle: { color: '#f56c6c' },
+      areaStyle: {
+        color: new graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: 'rgba(245, 108, 108, 0.5)' },
+          { offset: 1, color: 'rgba(245, 108, 108, 0.1)' }
+        ])
+      }
+    }]
+  });
+
+  humidityChartInstance.setOption({
+    title: { text: '湿度变化', left: 'center', textStyle: { color: '#333', fontSize: 14 } },
+    tooltip: { trigger: 'axis' },
+    grid: { top: 40, bottom: 30, left: 50, right: 20 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 45 } },
+    yAxis: { type: 'value', name: '%', axisLabel: { formatter: '{value}%' } },
+    series: [{
+      type: 'line',
+      data: humidities,
+      smooth: true,
+      itemStyle: { color: '#409EFF' },
+      areaStyle: {
+        color: new graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: 'rgba(64, 158, 255, 0.5)' },
+          { offset: 1, color: 'rgba(64, 158, 255, 0.1)' }
+        ])
+      }
+    }]
+  });
+};
 
 // 更新时间
 const updateTime = () => {
@@ -203,112 +301,53 @@ const updateTime = () => {
 
 // 加载实时数据（使用公开 API）
 const loadTelemetry = async () => {
-  try {
-    const data = await fetchDisplayData();
-    if (data) {
-      if (data.telemetry) {
-        telemetry.value = {
-          temp: data.telemetry.temp !== null ? data.telemetry.temp.toFixed(1) : '--',
-          humidity: data.telemetry.humidity !== null ? data.telemetry.humidity.toFixed(1) : '--',
-          soil_moisture: data.telemetry.soil_moisture !== null ? data.telemetry.soil_moisture.toFixed(1) : '--',
-          light: data.telemetry.light !== null ? data.telemetry.light.toFixed(0) : '--'
-        };
-      }
-      if (data.device) {
-        device.value = {
-          id: data.device.id,
-          device_name: data.device.name,
-          status: data.device.status,
-          pump_state: data.device.pump_state,
-          fan_state: data.device.fan_state,
-          light_state: data.device.light_state
-        };
-      }
-      if (data.plants) {
-        plants.value = data.plants;
-      }
-      if (data.recent_records) {
-        recentRecords.value = data.recent_records;
-      }
-    }
-  } catch (error) {
-    console.error('加载遥测数据失败:', error);
+  const data = await fetchDisplayData();
+  if (!data) {
+    return;
   }
+
+  if (data.telemetry) {
+    telemetry.value = {
+      temp: data.telemetry.temp !== null ? data.telemetry.temp.toFixed(1) : '--',
+      humidity: data.telemetry.humidity !== null ? data.telemetry.humidity.toFixed(1) : '--',
+      soil_moisture: data.telemetry.soil_moisture !== null ? data.telemetry.soil_moisture.toFixed(1) : '--',
+      light: data.telemetry.light !== null ? data.telemetry.light.toFixed(0) : '--'
+    };
+  }
+  if (data.device) {
+    device.value = {
+      id: data.device.id,
+      device_name: data.device.name,
+      status: data.device.status,
+      pump_state: data.device.pump_state,
+      fan_state: data.device.fan_state,
+      light_state: data.device.light_state
+    };
+  }
+  if (data.plants) {
+    plants.value = data.plants;
+  }
+  if (data.recent_records) {
+    recentRecords.value = data.recent_records;
+  }
+
+  lastSyncText.value = `最近同步：${new Date().toLocaleTimeString('zh-CN')}`;
+  setDisplayStatus('success', '实时数据同步正常');
 };
 
 // 初始化图表
-const initCharts = async () => {
+const initCharts = () => {
   if (!tempChart.value || !humidityChart.value) return;
 
-  // 温度图表
-  tempChartInstance = echarts.init(tempChart.value);
-  humidityChartInstance = echarts.init(humidityChart.value);
+  tempChartInstance = init(tempChart.value);
+  humidityChartInstance = init(humidityChart.value);
+};
 
-  // 加载历史数据（使用公开 API 获取最近数据）
-  try {
-    const data = await fetchDisplayData();
-    if (!data || !data.telemetry) return;
-    
-    // 使用单点数据模拟趋势（公开 API 不返回完整历史）
-    const now = new Date();
-    const times = [];
-    const temps = [];
-    const humidities = [];
-    
-    // 生成过去 5 个时间点的模拟数据
-    for (let i = 4; i >= 0; i--) {
-      const time = new Date(now.getTime() - i * 5 * 60000);
-      times.push(`${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`);
-      // 使用当前数据加小幅随机波动
-      const baseTemp = data.telemetry.temp || 25;
-      const baseHumidity = data.telemetry.humidity || 60;
-      temps.push((baseTemp + (Math.random() - 0.5) * 2).toFixed(1));
-      humidities.push((baseHumidity + (Math.random() - 0.5) * 5).toFixed(1));
-    }
-
-    // 温度图表配置
-    tempChartInstance.setOption({
-      title: { text: '温度变化', left: 'center', textStyle: { color: '#333', fontSize: 14 } },
-      tooltip: { trigger: 'axis' },
-      grid: { top: 40, bottom: 30, left: 50, right: 20 },
-      xAxis: { type: 'category', data: times, axisLabel: { rotate: 45 } },
-      yAxis: { type: 'value', name: '°C', axisLabel: { formatter: '{value}°C' } },
-      series: [{
-        type: 'line',
-        data: temps,
-        smooth: true,
-        itemStyle: { color: '#f56c6c' },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(245, 108, 108, 0.5)' },
-            { offset: 1, color: 'rgba(245, 108, 108, 0.1)' }
-          ])
-        }
-      }]
-    });
-
-    // 湿度图表配置
-    humidityChartInstance.setOption({
-      title: { text: '湿度变化', left: 'center', textStyle: { color: '#333', fontSize: 14 } },
-      tooltip: { trigger: 'axis' },
-      grid: { top: 40, bottom: 30, left: 50, right: 20 },
-      xAxis: { type: 'category', data: times, axisLabel: { rotate: 45 } },
-      yAxis: { type: 'value', name: '%', axisLabel: { formatter: '{value}%' } },
-      series: [{
-        type: 'line',
-        data: humidities,
-        smooth: true,
-        itemStyle: { color: '#409EFF' },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(64, 158, 255, 0.5)' },
-            { offset: 1, color: 'rgba(64, 158, 255, 0.1)' }
-          ])
-        }
-      }]
-    });
-  } catch (error) {
-    console.error('加载图表数据失败:', error);
+const refreshDisplayData = async () => {
+  await loadTelemetry();
+  const rows = await fetchDisplayHistory();
+  if (rows.length > 0) {
+    updateChartsFromHistory(rows);
   }
 };
 
@@ -350,16 +389,22 @@ const getStageClass = (stage?: string) => {
 
 // 生命周期
 onMounted(() => {
+  const routeDeviceId = Number(route.query.device_id);
+  if (Number.isInteger(routeDeviceId) && routeDeviceId > 0) {
+    activeDeviceId.value = routeDeviceId;
+  }
+
   updateTime();
   timer = setInterval(() => {
     updateTime();
-    loadTelemetry();
+    refreshDisplayData();
   }, 5000);
 
   loading.value = true;
-  loadTelemetry();
   initCharts();
-  loading.value = false;
+  refreshDisplayData().finally(() => {
+    loading.value = false;
+  });
 });
 
 onUnmounted(() => {
@@ -372,7 +417,10 @@ onUnmounted(() => {
 <style scoped>
 .dashboard-display {
   min-height: 100vh;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  background:
+    radial-gradient(circle at 80% 10%, rgba(58, 107, 181, 0.2), transparent 28%),
+    radial-gradient(circle at 10% 85%, rgba(45, 130, 82, 0.18), transparent 34%),
+    linear-gradient(138deg, #10233d 0%, #14304f 38%, #16334b 100%);
   color: white;
   padding: 20px;
 }
@@ -382,16 +430,18 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 20px 30px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  border: 1px solid rgba(194, 219, 255, 0.18);
   margin-bottom: 20px;
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(14px);
 }
 
 .top-bar h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .top-info {
@@ -399,6 +449,10 @@ onUnmounted(() => {
   gap: 30px;
   font-size: 18px;
   color: rgba(255, 255, 255, 0.8);
+}
+
+.status-alert {
+  margin-bottom: 16px;
 }
 
 .main-content {
@@ -415,19 +469,20 @@ onUnmounted(() => {
 }
 
 .data-card {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.09);
   border-radius: 16px;
   padding: 24px;
   display: flex;
   align-items: center;
   gap: 20px;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: transform 0.3s;
+  border: 1px solid rgba(188, 223, 255, 0.16);
+  transition: transform 0.24s ease, box-shadow 0.24s ease;
 }
 
 .data-card:hover {
-  transform: translateY(-5px);
+  transform: translateY(-4px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
 }
 
 .card-icon {
@@ -490,10 +545,11 @@ onUnmounted(() => {
 }
 
 .device-status {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  border: 1px solid rgba(188, 223, 255, 0.16);
   padding: 20px;
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(12px);
 }
 
 .device-status h3 {
@@ -577,10 +633,11 @@ onUnmounted(() => {
 
 /* 第三行 */
 .third-row {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  border: 1px solid rgba(188, 223, 255, 0.16);
   padding: 20px;
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(12px);
 }
 
 .timeline-section h3 {
@@ -676,5 +733,54 @@ onUnmounted(() => {
 .fullscreen-btn:hover {
   background: rgba(64, 158, 255, 1);
   transform: scale(1.05);
+}
+
+@media (max-width: 1200px) {
+  .data-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .second-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-display {
+    padding: 12px;
+  }
+
+  .top-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .top-bar h1 {
+    font-size: 22px;
+  }
+
+  .top-info {
+    gap: 16px;
+    font-size: 14px;
+  }
+
+  .data-cards,
+  .charts-container {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .card-value {
+    font-size: 28px;
+  }
+
+  .fullscreen-btn {
+    right: 14px;
+    bottom: 14px;
+    padding: 10px 16px;
+    font-size: 14px;
+  }
 }
 </style>

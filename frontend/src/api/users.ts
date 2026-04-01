@@ -65,15 +65,22 @@ export interface ImportResult {
     message: string;
 }
 
+export interface UsersListResponse {
+    items: User[];
+    total: number;
+    page: number;
+    page_size: number;
+}
+
 // ================= 用户管理 API =================
 export const getUsers = async (params?: {
     role?: string;
     class_id?: number;
     is_active?: boolean;
     search?: string;
-    limit?: number;
-    offset?: number;
-}): Promise<User[]> => {
+    page?: number;
+    page_size?: number;
+}): Promise<UsersListResponse> => {
     const response = await api.get('/users', { params });
     return response.data;
 };
@@ -127,11 +134,28 @@ export const importUsers = async (file: File): Promise<ImportResult> => {
     return response.data;
 };
 
-export const exportUsers = async (): Promise<Blob> => {
-    const response = await api.get('/users/export', {
-        responseType: 'blob'
+export const exportUsers = async (): Promise<{ blob: Blob; filename: string | null }> => {
+    const response = await api.get('/users-export', {
+        responseType: 'blob',
+        timeout: 60000
     });
-    return response.data;
+
+    const contentDisposition = response.headers['content-disposition'] as string | undefined;
+    let filename: string | null = null;
+    if (contentDisposition) {
+        const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+        const rawName = utf8Match?.[1] || plainMatch?.[1];
+        if (rawName) {
+            try {
+                filename = decodeURIComponent(rawName);
+            } catch {
+                filename = rawName;
+            }
+        }
+    }
+
+    return { blob: response.data, filename };
 };
 
 // ================= 批量操作 API =================

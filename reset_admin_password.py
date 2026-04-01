@@ -2,11 +2,13 @@
 重置 admin 用户密码脚本
 
 使用方法：
-    .venv\Scripts\python.exe reset_admin_password.py 新密码
+    .venv/Scripts/python.exe reset_admin_password.py 新密码
 """
 
 import sys
-from main import SessionLocal, User, pwd_context
+from app.db.session import SessionLocal
+from app.db.models import User
+from app.core.security import pwd_context
 
 def reset_admin_password(new_password: str):
     db = SessionLocal()

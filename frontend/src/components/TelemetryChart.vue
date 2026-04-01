@@ -4,8 +4,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted } from 'vue';
-import * as echarts from 'echarts';
+import { init, use, graphic } from 'echarts/core';
+import { LineChart } from 'echarts/charts';
+import { GridComponent, TooltipComponent, TitleComponent } from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+import type { ECharts } from 'echarts/core';
 import type { Telemetry } from '../api';
+
+use([LineChart, GridComponent, TooltipComponent, TitleComponent, CanvasRenderer]);
 
 const props = defineProps<{
   data: Telemetry[];
@@ -16,11 +22,19 @@ const props = defineProps<{
 }>();
 
 const chartContainer = ref<HTMLElement | null>(null);
-let chartInstance: echarts.ECharts | null = null;
+let chartInstance: ECharts | null = null;
+let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+const handleResize = () => {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    chartInstance?.resize();
+  }, 120);
+};
 
 const initChart = () => {
   if (chartContainer.value) {
-    chartInstance = echarts.init(chartContainer.value);
+    chartInstance = init(chartContainer.value);
     updateChart();
   }
 };
@@ -30,12 +44,18 @@ const updateChart = () => {
 
   // Process data: sort by timestamp ascending for chart
   const sortedData = [...props.data].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  // Downsample large datasets to reduce chart rendering pressure
+  const maxPoints = 500;
+  const sampledData = sortedData.length > maxPoints
+    ? sortedData.filter((_, idx) => idx % Math.ceil(sortedData.length / maxPoints) === 0)
+    : sortedData;
   
-  const dates = sortedData.map(item => {
+  const dates = sampledData.map(item => {
     const d = new Date(item.timestamp);
     return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
   });
-  const values = sortedData.map(item => item[props.field]);
+  const values = sampledData.map(item => item[props.field]);
 
   const option = {
     title: { 
@@ -75,7 +95,7 @@ const updateChart = () => {
       itemStyle: { color: props.color },
       lineStyle: { width: 3 },
       areaStyle: {
-        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+        color: new graphic.LinearGradient(0, 0, 0, 1, [
           { offset: 0, color: props.color },
           { offset: 1, color: 'rgba(255, 255, 255, 0)' }
         ])
@@ -90,11 +110,12 @@ watch(() => props.data, updateChart, { deep: true });
 
 onMounted(() => {
   initChart();
-  window.addEventListener('resize', () => chartInstance?.resize());
+  window.addEventListener('resize', handleResize);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', () => chartInstance?.resize());
+  window.removeEventListener('resize', handleResize);
+  if (resizeTimer) clearTimeout(resizeTimer);
   chartInstance?.dispose();
 });
 </script>

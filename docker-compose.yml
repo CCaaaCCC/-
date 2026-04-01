@@ -1,0 +1,53 @@
+version: '3.9'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: greenhouse-db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: smart_greenhouse
+      MYSQL_USER: greenhouse_user
+      MYSQL_PASSWORD: greenhouse_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: greenhouse-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://greenhouse_user:greenhouse_password@db:3306/smart_greenhouse
+      SECRET_KEY: change-this-for-production
+      DEVICE_TOKEN: default_secret_device_token
+      ACCESS_TOKEN_EXPIRE_MINUTES: 120
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      SEED_DEMO_DATA: "true"
+      DEMO_ADMIN_PASSWORD: admin123
+      DEMO_TEACHER_PASSWORD: teacher123
+      DEMO_STUDENT_PASSWORD: student123
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: greenhouse-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  db_data:

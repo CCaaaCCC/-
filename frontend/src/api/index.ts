@@ -53,6 +53,15 @@ export const login = async (username: string, password: string) => {
     return response.data;
 };
 
+// Logout function
+export const logoutUser = async () => {
+    try {
+        await api.post('/auth/logout');
+    } catch (e) {
+        console.error('Logout failed:', e);
+    }
+};
+
 // Interfaces matching the backend Pydantic models
 export interface Telemetry {
     id: number;
@@ -88,6 +97,104 @@ export interface DeviceCreateRequest {
     light_state?: number;
 }
 
+export interface Assignment {
+    id: number;
+    title: string;
+    description?: string;
+    class_id?: number;
+    class_name?: string;
+    device_id?: number;
+    device_name?: string;
+    due_date?: string;
+    created_at: string;
+    submission_count: number;
+    requirement?: string;
+    is_published: boolean;
+}
+
+export interface UserProfile {
+    id: number;
+    username: string;
+    role: string;
+    real_name?: string;
+    avatar_url?: string;
+    email?: string;
+    class_id?: number;
+    class_name?: string;
+    todos: {
+        pending_assignments: number;
+        overdue_assignments: number;
+        assignments_to_grade: number;
+        plants_in_class: number;
+    };
+    upcoming_assignments: Assignment[];
+}
+
+export interface NotificationItem {
+    id: number;
+    user_id: number;
+    actor_id?: number;
+    actor_name?: string;
+    notification_type: string;
+    title: string;
+    content?: string;
+    content_id?: number;
+    comment_id?: number;
+    is_read: boolean;
+    created_at: string;
+}
+
+export interface AssignmentSubmission {
+    id: number;
+    assignment_id: number;
+    student_id: number;
+    student_name?: string;
+    status: string;
+    observations?: string;
+    conclusion?: string;
+    experiment_date?: string;
+    submitted_at?: string;
+    score?: number | null;
+    teacher_comment?: string;
+    temp_records?: string;
+    humidity_records?: string;
+    soil_moisture_records?: string;
+    light_records?: string;
+    photos?: string;
+    report_file_name?: string;
+    report_file_path?: string;
+    report_file_size?: number;
+}
+
+export interface TelemetryRealtimePayload {
+    type: 'snapshot' | 'telemetry_update' | 'control_update';
+    device_id: number;
+    timestamp?: string;
+    telemetry: {
+        temp: number | null;
+        humidity: number | null;
+        soil_moisture: number | null;
+        light: number | null;
+    };
+    actuators: {
+        pump_state: number;
+        fan_state: number;
+        light_state: number;
+    };
+}
+
+export interface AIScienceAskRequest {
+    question: string;
+    device_id?: number;
+}
+
+export interface AIScienceAskResponse {
+    answer: string;
+    source: 'qwen' | 'rule-based' | string;
+}
+
+export type DemoScenario = 'drought' | 'heatwave' | 'low_light' | 'healthy';
+
 // API functions
 export const getDevices = async (): Promise<Device[]> => {
     const response = await api.get<Device[]>('/devices');
@@ -106,6 +213,43 @@ export const getHistory = async (deviceId: number): Promise<Telemetry[]> => {
 
 export const controlDevice = async (deviceId: number, data: ControlRequest): Promise<void> => {
     await api.post(`/control/${deviceId}`, data);
+};
+
+export const askScienceAssistant = async (data: AIScienceAskRequest): Promise<AIScienceAskResponse> => {
+    const response = await api.post<AIScienceAskResponse>('/ai/science-assistant', data);
+    return response.data;
+};
+
+export const triggerDemoScenario = async (deviceId: number, scenario: DemoScenario): Promise<{ status: string; scenario: string; message: string }> => {
+    const response = await api.post(`/demo/scenario/${deviceId}`, { scenario });
+    return response.data;
+};
+
+export const createTelemetrySocket = (
+    deviceId: number,
+    onMessage: (payload: TelemetryRealtimePayload) => void,
+    onClose?: () => void
+): WebSocket => {
+    const token = localStorage.getItem('token') || '';
+    const apiBase = (api.defaults.baseURL || '').replace(/\/api\/?$/, '');
+    const backendUrl = apiBase || `${window.location.protocol}//${window.location.hostname}:8000`;
+    const backend = new URL(backendUrl, window.location.origin);
+    const wsProtocol = backend.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${wsProtocol}//${backend.host}/ws/telemetry/${deviceId}?token=${encodeURIComponent(token)}`;
+
+    const ws = new WebSocket(url);
+    ws.onmessage = (event) => {
+        try {
+            const payload = JSON.parse(event.data) as TelemetryRealtimePayload;
+            onMessage(payload);
+        } catch (e) {
+            console.error('解析实时数据失败:', e);
+        }
+    };
+    ws.onclose = () => {
+        if (onClose) onClose();
+    };
+    return ws;
 };
 
 // Export function
@@ -131,6 +275,21 @@ export const exportTelemetry = async (
 };
 
 // 班级 API
+export const updateClass = async (id: number, cls: {
+    class_name?: string;
+    grade?: string;
+    description?: string;
+    teacher_id?: number;
+    is_active?: boolean;
+}): Promise<any> => {
+    const response = await api.put(`/classes/${id}`, cls);
+    return response.data;
+};
+
+export const deleteClass = async (id: number): Promise<void> => {
+    await api.delete(`/classes/${id}`);
+};
+
 export const getClasses = async (params?: {
     grade?: string;
     is_active?: boolean;
@@ -149,13 +308,36 @@ export const createClass = async (cls: {
     return response.data;
 };
 
+// 班级设备绑定 API
+export const getClassDevices = async (classId: number): Promise<any[]> => {
+    const response = await api.get(`/classes/${classId}/devices`);
+    return response.data;
+};
+
+export const bindClassDevice = async (classId: number, deviceId: number): Promise<any> => {
+    const response = await api.post(`/classes/${classId}/devices/bind`, { class_id: classId, device_id: deviceId });
+    return response.data;
+};
+
+export const unbindClassDevice = async (classId: number, bindId: number): Promise<any> => {
+    const response = await api.delete(`/classes/${classId}/devices/unbind/${bindId}`);
+    return response.data;
+};
+
+export const getStudentDevice = async (studentId: number): Promise<any[]> => {
+    const response = await api.get(`/students/${studentId}/device`);
+    return response.data;
+};
+
 // 用户管理 API
 export const getUsers = async (params?: {
     role?: string;
     class_id?: number;
     is_active?: boolean;
     search?: string;
-}): Promise<any[]> => {
+    page?: number;
+    page_size?: number;
+}): Promise<any> => {
     const response = await api.get('/users', { params });
     return response.data;
 };
@@ -200,7 +382,7 @@ export const importUsers = async (file: File): Promise<any> => {
 };
 
 export const exportUsers = async (): Promise<Blob> => {
-    const response = await api.get('/users/export', {
+    const response = await api.get('/users-export', {
         responseType: 'blob'
     });
     return response.data;
@@ -239,7 +421,29 @@ export const createCategory = async (category: any): Promise<any> => {
     return response.data;
 };
 
-export const getContents = async (params?: any): Promise<any[]> => {
+export const getCategoriesTree = async (): Promise<any[]> => {
+    const response = await api.get('/content/categories/tree');
+    return response.data;
+};
+
+export const updateCategory = async (id: number, category: any): Promise<any> => {
+    const response = await api.put(`/content/categories/${id}`, category);
+    return response.data;
+};
+
+export const deleteCategory = async (id: number): Promise<any> => {
+    const response = await api.delete(`/content/categories/${id}`);
+    return response.data;
+};
+
+export const getContents = async (params?: {
+    category_id?: number;
+    content_type?: string;
+    is_published?: boolean;
+    search?: string;
+    page?: number;
+    page_size?: number;
+}): Promise<{ items: any[]; total: number; page: number; page_size: number }> => {
     const response = await api.get('/content/contents', { params });
     return response.data;
 };
@@ -293,6 +497,16 @@ export const addComment = async (contentId: number, comment: string): Promise<an
     return response.data;
 };
 
+export const replyComment = async (commentId: number, comment: string): Promise<any> => {
+    const response = await api.post(`/content/comments/${commentId}/reply`, { comment });
+    return response.data;
+};
+
+export const toggleCommentLike = async (commentId: number): Promise<{ comment_id: number; liked: boolean; like_count: number }> => {
+    const response = await api.post(`/content/comments/${commentId}/like`);
+    return response.data;
+};
+
 export const getLearningStats = async (): Promise<any> => {
     const response = await api.get('/content/stats/overview');
     return response.data;
@@ -314,6 +528,18 @@ export const createAssignment = async (assignment: any): Promise<any> => {
     return response.data;
 };
 
+export const setAssignmentPublishStatus = async (assignmentId: number, isPublished: boolean): Promise<any> => {
+    const response = await api.post(`/assignments/${assignmentId}/publish`, {
+        is_published: isPublished
+    });
+    return response.data;
+};
+
+export const deleteAssignment = async (assignmentId: number): Promise<any> => {
+    const response = await api.delete(`/assignments/${assignmentId}`);
+    return response.data;
+};
+
 export const getSubmissions = async (assignmentId: number, params?: any): Promise<any[]> => {
     const response = await api.get(`/assignments/${assignmentId}/submissions`, { params });
     return response.data;
@@ -326,6 +552,41 @@ export const getMySubmission = async (assignmentId: number): Promise<any> => {
 
 export const submitAssignment = async (assignmentId: number, submission: any): Promise<any> => {
     const response = await api.post(`/assignments/${assignmentId}/submit`, submission);
+    return response.data;
+};
+
+export const submitAssignmentWithFile = async (
+    assignmentId: number,
+    payload: {
+        experiment_date?: string;
+        observations?: string;
+        conclusion?: string;
+        temp_records?: string;
+        humidity_records?: string;
+        soil_moisture_records?: string;
+        light_records?: string;
+        photos?: string;
+    },
+    file: File
+): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    Object.entries(payload).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+            formData.append(key, String(value));
+        }
+    });
+
+    const response = await api.post(`/assignments/${assignmentId}/submit-with-file`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+};
+
+export const downloadSubmissionReport = async (submissionId: number): Promise<Blob> => {
+    const response = await api.get(`/assignments/submissions/${submissionId}/file`, {
+        responseType: 'blob'
+    });
     return response.data;
 };
 
@@ -348,6 +609,15 @@ export const createPlant = async (plant: any): Promise<any> => {
     return response.data;
 };
 
+export const uploadPlantImage = async (file: File): Promise<{ url: string }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/plants/upload-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+};
+
 export const getPlantRecords = async (plantId: number): Promise<any[]> => {
     const response = await api.get(`/plants/${plantId}/records`);
     return response.data;
@@ -364,9 +634,23 @@ export const getGroups = async (params?: any): Promise<any[]> => {
     return response.data;
 };
 
+export const getGroupDetail = async (groupId: number): Promise<any> => {
+    const response = await api.get(`/groups/${groupId}`);
+    return response.data;
+};
+
 export const createGroup = async (group: any): Promise<any> => {
     const response = await api.post('/groups', group);
     return response.data;
+};
+
+export const updateGroup = async (groupId: number, group: any): Promise<any> => {
+    const response = await api.put(`/groups/${groupId}`, group);
+    return response.data;
+};
+
+export const deleteGroup = async (groupId: number): Promise<void> => {
+    await api.delete(`/groups/${groupId}`);
 };
 
 export const addGroupMember = async (groupId: number, member: any): Promise<any> => {
@@ -374,8 +658,52 @@ export const addGroupMember = async (groupId: number, member: any): Promise<any>
     return response.data;
 };
 
+export const updateGroupMemberRole = async (memberId: number, role: string): Promise<any> => {
+    const response = await api.put(`/groups/members/${memberId}`, { role });
+    return response.data;
+};
+
 export const removeGroupMember = async (memberId: number): Promise<void> => {
     await api.delete(`/groups/members/${memberId}`);
+};
+
+export const getMyProfile = async (): Promise<UserProfile> => {
+    const response = await api.get('/profile/me');
+    return response.data;
+};
+
+export const updateMyProfile = async (payload: { real_name: string }): Promise<UserProfile> => {
+    const response = await api.patch('/profile/me', payload);
+    return response.data;
+};
+
+export const uploadProfileAvatar = async (file: File): Promise<{ avatar_url: string }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/profile/avatar', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+};
+
+export const getNotifications = async (params?: { page?: number; page_size?: number }): Promise<{ items: NotificationItem[]; total: number; page: number; page_size: number }> => {
+    const response = await api.get('/notifications', { params });
+    return response.data;
+};
+
+export const getNotificationUnreadCount = async (): Promise<{ unread_count: number }> => {
+    const response = await api.get('/notifications/unread-count');
+    return response.data;
+};
+
+export const markNotificationRead = async (notificationId: number): Promise<{ message: string }> => {
+    const response = await api.post(`/notifications/${notificationId}/read`);
+    return response.data;
+};
+
+export const markAllNotificationsRead = async (): Promise<{ message: string; updated: number }> => {
+    const response = await api.post('/notifications/read-all');
+    return response.data;
 };
 
 export default api;

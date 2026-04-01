@@ -74,7 +74,7 @@ void loop() {
       HTTPClient http;
       http.begin(serverUrl);
       http.addHeader("Content-Type", "application/json");
-
+        http.addHeader("X-Device-Token", "default_secret_device_token");
       Serial.print("Sending Data: ");
       Serial.println(jsonOutput);
 

@@ -8,7 +8,8 @@
       </div>
       <div class="header-right">
         <el-button v-if="canManage" @click="showStatsDialog = true">📊 学习统计</el-button>
-        <el-button @click="$router.push('/')">返回大棚监控</el-button>
+        <NotificationBell />
+        <el-button @click="$router.push('/')">返回工作台</el-button>
         <el-button type="danger" plain @click="handleLogout">退出登录</el-button>
       </div>
     </div>
@@ -55,13 +56,13 @@
           <h4 style="margin-top: 30px;">学习进度分布</h4>
           <el-row :gutter="20">
             <el-col :span="8">
-              <el-progress type="dashboard" :percentage="stats.completed_count" status="success" :format="() => `已完成 ${stats.completed_count}`" />
+              <el-progress type="dashboard" :percentage="progressDistribution.completed" status="success" :format="() => `已完成 ${stats.completed_count}`" />
             </el-col>
             <el-col :span="8">
-              <el-progress type="dashboard" :percentage="stats.in_progress_count" status="warning" :format="() => `进行中 ${stats.in_progress_count}`" />
+              <el-progress type="dashboard" :percentage="progressDistribution.inProgress" status="warning" :format="() => `进行中 ${stats.in_progress_count}`" />
             </el-col>
             <el-col :span="8">
-              <el-progress type="dashboard" :percentage="stats.not_started_count" status="exception" :format="() => `未开始 ${stats.not_started_count}`" />
+              <el-progress type="dashboard" :percentage="progressDistribution.notStarted" status="exception" :format="() => `未开始 ${stats.not_started_count}`" />
             </el-col>
           </el-row>
         </el-tab-pane>
@@ -136,27 +137,39 @@
 
       <!-- 右侧内容列表 -->
       <div class="content-area">
-        <!-- 搜索栏 -->
-        <div class="search-bar">
+        <!-- 顶部筛选 -->
+        <div class="search-bar app-glass-card">
           <el-input
             v-model="searchQuery"
             placeholder="搜索教学内容..."
             clearable
             @keyup.enter="handleSearch"
-            style="width: 300px"
+            class="search-input"
           >
             <template #prefix>
               <el-icon><Search /></el-icon>
             </template>
           </el-input>
-          <el-select v-model="searchType" placeholder="全部类型" clearable style="width: 120px; margin-left: 10px;">
+
+          <el-select v-model="activeCategoryId" placeholder="全部分类" class="search-select" @change="loadContents">
+            <el-option label="全部分类" :value="0" />
+            <el-option
+              v-for="category in categories"
+              :key="category.id"
+              :label="category.name"
+              :value="category.id"
+            />
+          </el-select>
+
+          <el-select v-model="searchType" placeholder="全部类型" clearable class="search-select">
             <el-option label="文章" value="article" />
             <el-option label="视频" value="video" />
             <el-option label="图片" value="image" />
             <el-option label="PDF" value="pdf" />
           </el-select>
-          <el-button type="primary" @click="handleSearch" style="margin-left: 10px;">搜索</el-button>
-          <el-button @click="clearSearch" v-if="searchQuery || searchType">重置</el-button>
+
+          <el-button type="primary" round @click="handleSearch">搜索</el-button>
+          <el-button round @click="clearSearch" v-if="searchQuery || searchType || activeCategoryId">重置</el-button>
         </div>
 
         <!-- 教师管理员操作栏 -->
@@ -166,56 +179,70 @@
           </el-button>
         </div>
 
-        <!-- 内容列表 -->
-        <el-row :gutter="20" class="content-grid">
-          <el-col
+        <!-- 内容卡片流 -->
+        <div v-if="contents.length > 0" class="content-waterfall">
+          <article
             v-for="content in contents"
             :key="content.id"
-            :xs="24"
-            :sm="12"
-            :md="8"
+            class="content-card app-glass-card"
+            @click="viewContent(content.id)"
           >
-            <el-card
-              shadow="hover"
-              class="content-card"
-              @click="viewContent(content.id)"
-            >
-              <div class="content-cover" v-if="content.cover_image">
-                <img :src="content.cover_image" :alt="content.title" />
-              </div>
-              <div class="content-type-tag">
-                <el-tag size="small" :type="getTypeTag(content.content_type)">
-                  {{ getTypeText(content.content_type) }}
-                </el-tag>
-              </div>
-              <h3 class="content-title">{{ content.title }}</h3>
-              <div class="content-meta">
-                <span class="meta-item">
-                  <el-icon><View /></el-icon>
-                  {{ content.view_count }}
-                </span>
-                <span class="meta-item" v-if="content.is_published">
-                  <el-icon><CircleCheck /></el-icon>
-                  已发布
-                </span>
-                <span class="meta-item" v-else>
-                  <el-icon><Clock /></el-icon>
-                  未发布
-                </span>
-              </div>
-              <!-- 管理操作 -->
-              <div v-if="canManage" class="content-actions" @click.stop>
-                <el-button size="small" @click="editContent(content)">编辑</el-button>
-                <el-button size="small" type="primary" @click="togglePublish(content)">
-                  {{ content.is_published ? '取消发布' : '发布' }}
-                </el-button>
-                <el-button size="small" type="danger" @click="deleteContentItem(content.id)">删除</el-button>
-              </div>
-            </el-card>
-          </el-col>
-        </el-row>
+            <div class="card-cover" :class="`type-${content.content_type}`">
+              <template v-if="content.content_type === 'video' && content.cover_image">
+                <img :src="resolveAssetUrl(content.cover_image)" :alt="content.title" />
+              </template>
+              <template v-if="content.content_type === 'video'">
+                <div class="play-overlay">
+                  <el-icon :size="26"><VideoPlay /></el-icon>
+                </div>
+              </template>
+              <template v-else-if="content.content_type === 'article'">
+                <div class="article-cover-default">
+                  <span class="leaf-icon">🌿</span>
+                  <span>自然科学小课堂</span>
+                </div>
+              </template>
+              <template v-else-if="content.cover_image">
+                <img :src="resolveAssetUrl(content.cover_image)" :alt="content.title" />
+              </template>
+              <template v-else>
+                <div class="generic-cover">📘 教学资源</div>
+              </template>
 
-        <el-empty v-if="contents.length === 0" description="暂无教学内容" />
+              <div v-if="canManage" class="manager-overlay" @click.stop>
+                <el-button circle size="small" @click="editContent(content)">
+                  <el-icon><Edit /></el-icon>
+                </el-button>
+                <el-button circle size="small" type="danger" plain @click="deleteContentItem(content.id)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+            </div>
+
+            <div class="card-body">
+              <h3 class="content-title">{{ content.title }}</h3>
+              <p class="content-summary">{{ getContentSummary(content) }}</p>
+            </div>
+
+            <div class="card-footer">
+              <div class="footer-left">
+                <el-tag size="small" :type="getTypeTag(content.content_type)">{{ getTypeText(content.content_type) }}</el-tag>
+                <span class="duration">{{ estimateDurationText(content) }}</span>
+              </div>
+              <div v-if="userRole === 'student'" class="footer-right progress-inline">
+                <span class="progress-blocks">{{ getProgressBlocks(getContentProgress(content.id)) }}</span>
+                <span class="progress-text">{{ getContentProgress(content.id) }}%</span>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div v-else class="empty-content-state app-glass-card">
+          <div class="empty-plant">🌱</div>
+          <h3>这里还没有找到教学内容</h3>
+          <p>{{ searchQuery || searchType || activeCategoryId ? '换个关键词或分类试试吧。' : '老师正在准备有趣的科学内容，稍后回来看看。' }}</p>
+          <el-button type="primary" round @click="handleEmptyAction">去学习</el-button>
+        </div>
       </div>
     </div>
 
@@ -353,10 +380,51 @@
           <div class="comment-list">
             <div v-for="comment in comments" :key="comment.id" class="comment-item">
               <div class="comment-header">
-                <strong>{{ comment.student_name }}</strong>
+                <div class="comment-author">
+                  <el-avatar :size="28" :src="resolveAssetUrl(comment.student_avatar_url)">{{ (comment.student_name || '?').slice(0, 1) }}</el-avatar>
+                  <strong>{{ comment.student_name }}</strong>
+                </div>
                 <span class="comment-time">{{ formatDate(comment.created_at) }}</span>
               </div>
               <div class="comment-body">{{ comment.comment }}</div>
+              <div class="comment-actions">
+                <el-button text size="small" @click="startReply(comment.id)">回复</el-button>
+                <el-button text size="small" @click="toggleLike(comment)">
+                  {{ comment.liked ? '取消点赞' : '点赞' }} ({{ comment.like_count || 0 }})
+                </el-button>
+              </div>
+
+              <div v-if="replyingCommentId === comment.id" class="reply-input">
+                <el-input
+                  v-model="replyText"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="写下你的回复..."
+                />
+                <div class="reply-actions">
+                  <el-button size="small" @click="cancelReply">取消</el-button>
+                  <el-button type="primary" size="small" @click="submitReply(comment.id)">发送回复</el-button>
+                </div>
+              </div>
+
+              <div v-if="comment.replies && comment.replies.length > 0" class="reply-list">
+                <div v-for="reply in comment.replies" :key="reply.id" class="reply-item">
+                  <div class="comment-header">
+                    <div class="comment-author">
+                      <el-avatar :size="24" :src="resolveAssetUrl(reply.student_avatar_url)">{{ (reply.student_name || '?').slice(0, 1) }}</el-avatar>
+                      <strong>{{ reply.student_name }}</strong>
+                    </div>
+                    <span class="comment-time">{{ formatDate(reply.created_at) }}</span>
+                  </div>
+                  <div class="comment-body">{{ reply.comment }}</div>
+                  <div class="comment-actions">
+                    <el-button text size="small" @click="toggleLike(reply)">
+                      {{ reply.liked ? '取消点赞' : '点赞' }} ({{ reply.like_count || 0 }})
+                    </el-button>
+                  </div>
+                </div>
+              </div>
+
               <div v-if="comment.teacher_reply" class="teacher-reply">
                 <el-tag size="small" type="success">教师回复</el-tag>
                 <p>{{ comment.teacher_reply }}</p>
@@ -371,9 +439,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import { useRouter } from 'vue-router';
-import { Folder, View, CircleCheck, Clock, Search } from '@element-plus/icons-vue';
+import { ref, onMounted, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { Folder, Search, VideoPlay, Edit, Delete } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import MarkdownIt from 'markdown-it';
 import {
@@ -393,11 +461,15 @@ import {
   completeLearning,
   getComments,
   addComment,
+  replyComment,
+  toggleCommentLike,
   getLearningStats,
   getStudentsProgress
 } from '../api/teaching';
+import NotificationBell from '../components/NotificationBell.vue';
 
 const router = useRouter();
+const route = useRoute();
 const userRole = ref(localStorage.getItem('role') || 'student');
 
 // Markdown 渲染
@@ -451,10 +523,19 @@ const currentContent = ref<any>(null);
 const currentContentId = ref<number | null>(null);
 const comments = ref<any[]>([]);
 const newComment = ref('');
+const replyingCommentId = ref<number | null>(null);
+const replyText = ref('');
 const learningRecord = ref<any>(null);
 
 // 学习记录
 const learningRecords = ref<any[]>([]);
+const learningProgressMap = computed(() => {
+  const map = new Map<number, number>();
+  for (const record of learningRecords.value) {
+    map.set(record.content_id, Number(record.progress_percent || 0));
+  }
+  return map;
+});
 
 // 搜索相关
 const searchQuery = ref('');
@@ -474,14 +555,29 @@ const stats = ref<any>({
 });
 const studentsProgress = ref<any[]>([]);
 
+const progressDistribution = computed(() => {
+  const total = stats.value.total_learning_records || (
+    (stats.value.completed_count || 0) +
+    (stats.value.in_progress_count || 0) +
+    (stats.value.not_started_count || 0)
+  );
+  if (!total) {
+    return { completed: 0, inProgress: 0, notStarted: 0 };
+  }
+  const completed = Math.round((stats.value.completed_count / total) * 100);
+  const inProgress = Math.round((stats.value.in_progress_count / total) * 100);
+  const notStarted = Math.max(0, 100 - completed - inProgress);
+  return { completed, inProgress, notStarted };
+});
+
 // 加载统计
 const loadStats = async () => {
   if (!canManage.value) return;
   try {
     stats.value = await getLearningStats();
     studentsProgress.value = await getStudentsProgress();
-  } catch (error) {
-    console.error('加载统计失败:', error);
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '学习统计加载失败');
   }
 };
 
@@ -489,8 +585,8 @@ const loadStats = async () => {
 const loadCategories = async () => {
   try {
     categories.value = await getCategories();
-  } catch (error) {
-    console.error('加载分类失败:', error);
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '加载分类失败');
   }
 };
 
@@ -500,9 +596,10 @@ const loadContents = async () => {
     if (activeCategoryId.value) params.category_id = activeCategoryId.value;
     if (searchType.value) params.content_type = searchType.value;
     if (searchQuery.value) params.search = searchQuery.value;
-    contents.value = await getContents(params);
-  } catch (error) {
-    console.error('加载内容失败:', error);
+    const response = await getContents(params);
+    contents.value = Array.isArray(response) ? response : (response?.items || []);
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '加载内容失败');
   }
 };
 
@@ -510,8 +607,8 @@ const loadLearningRecords = async () => {
   if (userRole.value === 'student') {
     try {
       learningRecords.value = await getMyLearning();
-    } catch (error) {
-      console.error('加载学习记录失败:', error);
+    } catch (error: any) {
+      ElMessage.error(error.response?.data?.detail || '加载学习记录失败');
     }
   }
 };
@@ -640,7 +737,7 @@ const loadContentDetail = async () => {
   if (!currentContentId.value) return;
   try {
     currentContent.value = await getContent(currentContentId.value);
-    comments.value = await getComments(currentContentId.value);
+    await loadComments();
     
     // 开始学习
     await startLearning(currentContentId.value);
@@ -661,7 +758,7 @@ const markAsComplete = async () => {
     ElMessage.success('已标记为完成');
     loadLearningRecords();
   } catch (error: any) {
-    ElMessage.error('操作失败');
+    ElMessage.error(error.response?.data?.detail || '操作失败');
   }
 };
 
@@ -675,9 +772,49 @@ const submitComment = async () => {
     await addComment(currentContentId.value, newComment.value);
     ElMessage.success('评论成功');
     newComment.value = '';
-    comments.value = await getComments(currentContentId.value);
+    await loadComments();
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '评论失败');
+  }
+};
+
+const loadComments = async () => {
+  if (!currentContentId.value) return;
+  comments.value = await getComments(currentContentId.value);
+};
+
+const startReply = (commentId: number) => {
+  replyingCommentId.value = commentId;
+  replyText.value = '';
+};
+
+const cancelReply = () => {
+  replyingCommentId.value = null;
+  replyText.value = '';
+};
+
+const submitReply = async (commentId: number) => {
+  if (!replyText.value.trim()) {
+    ElMessage.warning('请输入回复内容');
+    return;
+  }
+  try {
+    await replyComment(commentId, replyText.value);
+    ElMessage.success('回复成功');
+    cancelReply();
+    await loadComments();
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '回复失败');
+  }
+};
+
+const toggleLike = async (comment: any) => {
+  try {
+    const result = await toggleCommentLike(comment.id);
+    comment.liked = result.liked;
+    comment.like_count = result.like_count;
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '点赞操作失败');
   }
 };
 
@@ -697,6 +834,48 @@ const getContentTitle = (contentId: number) => {
   return content?.title || `内容 #${contentId}`;
 };
 
+const stripText = (value?: string) => {
+  if (!value) return '';
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[#>*`_\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const getContentSummary = (content: any) => {
+  if (content.content_type === 'video') {
+    return stripText(content.content) || '点击进入视频学习，边看边思考科学问题。';
+  }
+  if (content.content_type === 'article') {
+    return stripText(content.content) || '一篇图文内容，适合课后自主阅读。';
+  }
+  if (content.content_type === 'pdf') {
+    return '文档资料，适合下载后结合课堂讲解学习。';
+  }
+  if (content.content_type === 'image') {
+    return '图片资料，适合观察现象与记录细节。';
+  }
+  return '点击查看完整教学内容。';
+};
+
+const estimateDurationText = (content: any) => {
+  if (content.content_type === 'video') return '约 8 分钟';
+  const plain = stripText(content.content);
+  const minutes = Math.max(1, Math.ceil(plain.length / 220));
+  return `约 ${minutes} 分钟`;
+};
+
+const getContentProgress = (contentId: number) => {
+  return learningProgressMap.value.get(contentId) || 0;
+};
+
+const getProgressBlocks = (percent: number) => {
+  const filled = Math.max(0, Math.min(5, Math.round(percent / 20)));
+  return `${'▓'.repeat(filled)}${'░'.repeat(5 - filled)}`;
+};
+
 const formatContent = (content?: string) => {
   if (!content) return '<p>暂无内容</p>';
   // 使用 Markdown 渲染
@@ -710,11 +889,22 @@ const handleSearch = () => {
 const clearSearch = () => {
   searchQuery.value = '';
   searchType.value = '';
+  activeCategoryId.value = 0;
   loadContents();
+};
+
+const handleEmptyAction = () => {
+  clearSearch();
 };
 
 const formatDate = (dateStr: string) => {
   return new Date(dateStr).toLocaleString('zh-CN');
+};
+
+const resolveAssetUrl = (url?: string) => {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  return `http://localhost:8000${url}`;
 };
 
 const handleLogout = () => {
@@ -730,6 +920,17 @@ onMounted(() => {
   loadLearningRecords();
   loadStats();
 });
+
+watch(
+  () => route.query.content_id,
+  (value) => {
+    const queryContentId = Number(value);
+    if (!Number.isNaN(queryContentId) && queryContentId > 0) {
+      viewContent(queryContentId);
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>
@@ -807,59 +1008,154 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 
-.content-grid {
-  margin-top: 20px;
+
+.content-waterfall {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 18px;
+  align-items: start;
 }
 
 .content-card {
-  margin-bottom: 20px;
+  position: relative;
   cursor: pointer;
-  transition: transform 0.2s;
+  border-radius: 16px;
+  border: 1px solid rgba(58, 137, 91, 0.16);
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .content-card:hover {
   transform: translateY(-4px);
+  box-shadow: 0 16px 30px rgba(21, 65, 42, 0.16);
 }
 
-.content-cover {
-  height: 140px;
+.card-cover {
+  position: relative;
+  height: 160px;
+  background: #eef5f0;
   overflow: hidden;
-  border-radius: 4px;
-  margin: -16px -16px 0;
-  background: #f0f0f0;
 }
 
-.content-cover img {
+.card-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.content-type-tag {
-  margin-top: 10px;
+.card-cover.type-video {
+  background: linear-gradient(145deg, #0d2f44 0%, #1e6b8d 100%);
+}
+
+.card-cover.type-article {
+  background: linear-gradient(140deg, #d9f3e2 0%, #bbdfca 100%);
+}
+
+.article-cover-default,
+.generic-cover {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #214f35;
+  font-weight: 700;
+}
+
+.leaf-icon {
+  font-size: 34px;
+}
+
+.generic-cover {
+  color: #4d6659;
+}
+
+.play-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.28));
+}
+
+.manager-overlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.content-card:hover .manager-overlay {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.card-body {
+  padding: 12px 14px 4px;
 }
 
 .content-title {
   font-size: 16px;
-  margin: 10px 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  min-height: 44px;
 }
 
-.content-meta {
-  display: flex;
-  gap: 15px;
-  color: #999;
+.content-summary {
+  margin: 8px 0 0;
+  color: #60776b;
   font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.meta-item {
+.card-footer {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px 14px;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.duration {
+  font-size: 12px;
+  color: #6f8578;
+}
+
+.progress-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.progress-blocks {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #2d7a4d;
+}
+
+.progress-text {
+  font-size: 12px;
+  color: #4f6b5c;
 }
 
 .stats-grid {
@@ -883,18 +1179,57 @@ onMounted(() => {
   color: #409EFF;
 }
 
-.content-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 15px;
-  padding-top: 15px;
-  border-top: 1px solid #eee;
-}
-
 .search-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-bottom: 20px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(58, 137, 91, 0.14);
+}
+
+.search-input {
+  width: 320px;
+  max-width: 100%;
+}
+
+.search-select {
+  width: 150px;
+}
+
+.search-bar :deep(.el-input__wrapper),
+.search-bar :deep(.el-select__wrapper) {
+  border-radius: 999px;
+}
+
+.empty-content-state {
+  margin-top: 18px;
+  border-radius: 18px;
+  border: 1px dashed rgba(45, 122, 77, 0.35);
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  padding: 24px;
+}
+
+.empty-plant {
+  font-size: 48px;
+}
+
+.empty-content-state h3 {
+  margin: 0;
+  color: #2b5840;
+}
+
+.empty-content-state p {
+  margin: 0;
+  color: #638073;
 }
 
 .content-detail {
@@ -1092,7 +1427,14 @@ onMounted(() => {
 .comment-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   margin-bottom: 10px;
+}
+
+.comment-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .comment-time {
@@ -1105,6 +1447,40 @@ onMounted(() => {
   margin-bottom: 10px;
 }
 
+.comment-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.reply-input {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.reply-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.reply-list {
+  margin-top: 10px;
+  padding-left: 12px;
+  border-left: 2px solid #e4e7ed;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reply-item {
+  background: #ffffff;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 10px;
+}
+
 .teacher-reply {
   margin-top: 10px;
   padding: 10px;
@@ -1114,5 +1490,36 @@ onMounted(() => {
 
 .teacher-reply p {
   margin: 8px 0 0;
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .sidebar {
+    width: 100%;
+  }
+
+  .search-input,
+  .search-select {
+    width: 100%;
+  }
+
+  .search-bar :deep(.el-button) {
+    width: 100%;
+  }
+
+  .content-waterfall {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+@media (max-width: 520px) {
+  .content-waterfall {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -1,19 +1,13 @@
 <template>
   <div class="plants-page">
     <!-- 顶部导航 -->
-    <div class="header">
-      <div class="header-left">
-        <h2>🌱 植物档案</h2>
-        <el-tag :type="roleTagType">{{ userRoleText }}</el-tag>
-      </div>
-      <div class="header-right">
-        <el-button @click="$router.push('/')">🏠 返回大棚监控</el-button>
+    <AppTopBar title="🌱 植物档案" :roleTagType="roleTagType" :roleText="userRoleText">
+      <template #extra-actions>
         <el-button type="primary" @click="showPlantDialog = true" v-if="isTeacher">
           <el-icon><Plus /></el-icon> 创建档案
         </el-button>
-        <el-button type="danger" plain @click="handleLogout">退出登录</el-button>
-      </div>
-    </div>
+      </template>
+    </AppTopBar>
 
     <!-- 主内容区 -->
     <div class="main-container">
@@ -52,6 +46,13 @@
       <!-- 右侧植物列表 -->
       <div class="content-area">
         <div class="plant-grid" v-loading="loading">
+          <StatusPanel
+            v-if="pageErrorDetail"
+            :description="pageErrorDetail"
+            :actionText="pageErrorActionText"
+            :actionRoute="pageErrorActionRoute"
+          />
+
           <el-card
             v-for="plant in plants"
             :key="plant.id"
@@ -60,7 +61,8 @@
             @click="viewPlant(plant)"
           >
             <div class="plant-image">
-              <div class="image-placeholder">
+              <img v-if="plant.cover_image" :src="resolveImageUrl(plant.cover_image)" class="cover-img" alt="植物封面" />
+              <div v-else class="image-placeholder">
                 <el-icon :size="60"><Picture /></el-icon>
               </div>
             </div>
@@ -74,7 +76,13 @@
             </div>
           </el-card>
 
-          <el-empty v-if="!loading && plants.length === 0" description="暂无植物档案" />
+          <StatusPanel
+            v-if="!pageErrorDetail && !loading && plants.length === 0"
+            :description="isTeacher ? '暂无班级植物档案' : '暂无可查看的植物档案'"
+            :actionText="isTeacher ? '创建档案' : '去个人中心'"
+            :actionRoute="isTeacher ? undefined : '/profile'"
+            :actionCallback="isTeacher ? () => (showPlantDialog = true) : undefined"
+          />
         </div>
       </div>
     </div>
@@ -112,6 +120,7 @@
           <el-date-picker
             v-model="plantForm.plant_date"
             type="date"
+            value-format="YYYY-MM-DD"
             placeholder="选择日期"
             style="width: 100%"
           />
@@ -120,6 +129,7 @@
           <el-date-picker
             v-model="plantForm.expected_harvest_date"
             type="date"
+            value-format="YYYY-MM-DD"
             placeholder="选择日期"
             style="width: 100%"
           />
@@ -130,6 +140,18 @@
             <el-option label="已收获" value="harvested" />
             <el-option label="已枯萎" value="withered" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="封面图片">
+          <el-upload
+            :show-file-list="false"
+            :http-request="handleCoverUpload"
+            accept="image/*"
+          >
+            <el-button :loading="uploadingCover" type="primary" plain>上传图片</el-button>
+          </el-upload>
+          <div v-if="plantForm.cover_image" class="cover-preview-wrap">
+            <img :src="resolveImageUrl(plantForm.cover_image)" class="cover-preview" alt="封面预览" />
+          </div>
         </el-form-item>
         <el-form-item label="描述">
           <el-input
@@ -154,7 +176,8 @@
           <el-col :span="10">
             <div class="plant-info">
               <div class="info-avatar">
-                <el-icon :size="80"><Picture /></el-icon>
+                <img v-if="currentPlant.cover_image" :src="resolveImageUrl(currentPlant.cover_image)" class="detail-cover-img" alt="植物封面" />
+                <el-icon v-else :size="80"><Picture /></el-icon>
               </div>
               <h3>{{ currentPlant.plant_name }}</h3>
               <p class="species">{{ currentPlant.species }}</p>
@@ -203,7 +226,19 @@
                   </el-card>
                 </el-timeline-item>
               </el-timeline>
-              <el-empty v-if="records.length === 0" description="暂无生长记录" :image-size="80" />
+              <StatusPanel
+                v-if="recordErrorDetail"
+                :description="recordErrorDetail"
+                :actionText="recordErrorActionText"
+                :actionRoute="recordErrorActionRoute"
+              />
+
+              <StatusPanel
+                v-else-if="records.length === 0"
+                description="暂无生长记录"
+                :actionText="!isTeacher ? '添加记录' : undefined"
+                :actionCallback="!isTeacher ? () => (showRecordDialog = true) : undefined"
+              />
             </div>
           </el-col>
         </el-row>
@@ -220,6 +255,7 @@
           <el-date-picker
             v-model="recordForm.record_date"
             type="date"
+            value-format="YYYY-MM-DD"
             placeholder="选择日期"
             style="width: 100%"
           />
@@ -278,20 +314,25 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { Plus, Filter, Picture as Seedling } from '@element-plus/icons-vue';
+import { Plus, Filter, Picture } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import type { FormInstance } from 'element-plus';
+import type { FormInstance, UploadRequestOptions } from 'element-plus';
+import StatusPanel from '../components/StatusPanel.vue';
+import apiClient from '../api';
 import {
+  uploadPlantImage,
   getPlants,
   createPlant,
   getPlantRecords,
   createPlantRecord,
-  getClasses,
-  getDevices
-} from '../api';
+} from '../api/plants';
+import { getClasses } from '../api/classes';
+import { getDevices } from '../api/devices';
+import { useCurrentUser } from '../composables/useCurrentUser';
+import AppTopBar from '../components/AppTopBar.vue';
 
 const router = useRouter();
-const userRole = ref(localStorage.getItem('role') || 'student');
+const { role: userRole, isTeacher, ensureLoaded } = useCurrentUser();
 
 const roleTagType = computed(() => {
   if (userRole.value === 'admin') return 'danger';
@@ -303,7 +344,6 @@ const userRoleText = computed(() => {
   if (userRole.value === 'teacher') return '教师';
   return '学生';
 });
-const isTeacher = computed(() => ['teacher', 'admin'].includes(userRole.value));
 
 // 数据
 const plants = ref<any[]>([]);
@@ -312,6 +352,23 @@ const devices = ref<any[]>([]);
 const records = ref<any[]>([]);
 const loading = ref(false);
 const submitting = ref(false);
+const uploadingCover = ref(false);
+
+const toLocalDateString = (input: Date = new Date()) => {
+  const y = input.getFullYear();
+  const m = `${input.getMonth() + 1}`.padStart(2, '0');
+  const d = `${input.getDate()}`.padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+// 页面级错误/空状态引导（403/401）
+const pageErrorDetail = ref<string>('');
+const pageErrorActionText = ref<string>('');
+const pageErrorActionRoute = ref<string>('');
+
+const recordErrorDetail = ref<string>('');
+const recordErrorActionText = ref<string>('');
+const recordErrorActionRoute = ref<string>('');
 
 // 筛选
 const filterForm = ref({
@@ -335,11 +392,12 @@ const plantForm = ref({
   plant_date: undefined as string | undefined,
   expected_harvest_date: undefined as string | undefined,
   status: 'growing',
+  cover_image: '',
   description: ''
 });
 
 const recordForm = ref({
-  record_date: new Date().toISOString().split('T')[0],
+  record_date: toLocalDateString(),
   stage: 'seedling',
   height_cm: undefined as number | undefined,
   leaf_count: undefined as number | undefined,
@@ -352,28 +410,48 @@ const recordForm = ref({
 const loadClasses = async () => {
   try {
     classes.value = await getClasses({ is_active: true });
-  } catch (error) {
-    console.error('加载班级失败:', error);
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '加载班级失败');
   }
 };
 
 const loadDevices = async () => {
   try {
     devices.value = await getDevices();
-  } catch (error) {
-    console.error('加载设备失败:', error);
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '加载设备失败');
   }
 };
 
-const loadPlants = async () => {
+const loadPlants = async (showError = true): Promise<boolean> => {
   loading.value = true;
+  pageErrorDetail.value = '';
+  pageErrorActionText.value = '';
+  pageErrorActionRoute.value = '';
   try {
     const params: any = {};
     if (filterForm.value.class_id) params.class_id = filterForm.value.class_id;
     if (filterForm.value.status) params.status = filterForm.value.status;
     plants.value = await getPlants(params);
+    return true;
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载失败');
+    if (showError) {
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail || '加载失败';
+      if (status === 401) {
+        pageErrorDetail.value = '未登录或登录已过期，请重新登录。';
+        pageErrorActionText.value = '去登录';
+        pageErrorActionRoute.value = '/login';
+      } else if (status === 403) {
+        pageErrorDetail.value = '你无权访问该班级的植物档案，请检查账号/班级分配后重试。';
+        pageErrorActionText.value = '查看个人中心';
+        pageErrorActionRoute.value = '/profile';
+      } else {
+        pageErrorDetail.value = detail;
+      }
+      ElMessage.error(detail);
+    }
+    return false;
   } finally {
     loading.value = false;
   }
@@ -383,10 +461,25 @@ const loadPlants = async () => {
 const viewPlant = async (plant: any) => {
   currentPlant.value = plant;
   showDetailDialog.value = true;
+  recordErrorDetail.value = '';
+  recordErrorActionText.value = '';
+  recordErrorActionRoute.value = '';
   try {
     records.value = await getPlantRecords(plant.id);
   } catch (error) {
-    console.error('加载记录失败:', error);
+    const status = (error as any)?.response?.status;
+    const detail = (error as any)?.response?.data?.detail || '加载记录失败';
+    if (status === 401) {
+      recordErrorDetail.value = '未登录或登录已过期，请重新登录。';
+      recordErrorActionText.value = '去登录';
+      recordErrorActionRoute.value = '/login';
+    } else if (status === 403) {
+      recordErrorDetail.value = '你无权访问该植物的生长记录，请检查账号/班级分配后重试。';
+      recordErrorActionText.value = '查看个人中心';
+      recordErrorActionRoute.value = '/profile';
+    } else {
+      recordErrorDetail.value = detail;
+    }
   }
 };
 
@@ -400,9 +493,13 @@ const submitPlant = async () => {
   submitting.value = true;
   try {
     await createPlant(plantForm.value);
-    ElMessage.success('档案创建成功');
+    const loaded = await loadPlants(false);
+    if (loaded) {
+      ElMessage.success('档案创建成功');
+    } else {
+      ElMessage.warning('档案创建成功，但列表刷新失败，请稍后手动刷新');
+    }
     showPlantDialog.value = false;
-    loadPlants();
     plantForm.value = {
       plant_name: '',
       species: '',
@@ -411,6 +508,7 @@ const submitPlant = async () => {
       plant_date: undefined,
       expected_harvest_date: undefined,
       status: 'growing',
+      cover_image: '',
       description: ''
     };
   } catch (error: any) {
@@ -418,6 +516,29 @@ const submitPlant = async () => {
   } finally {
     submitting.value = false;
   }
+};
+
+const handleCoverUpload = async (options: UploadRequestOptions) => {
+  uploadingCover.value = true;
+  try {
+    const file = options.file as File;
+    const res = await uploadPlantImage(file);
+    plantForm.value.cover_image = res.url;
+    options.onSuccess?.(res as any);
+    ElMessage.success('封面上传成功');
+  } catch (error: any) {
+    options.onError?.(error);
+    ElMessage.error(error.response?.data?.detail || '封面上传失败');
+  } finally {
+    uploadingCover.value = false;
+  }
+};
+
+const resolveImageUrl = (url?: string) => {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  const base = (apiClient.defaults.baseURL || '').replace(/\/api\/?$/, '');
+  return `${base}${url}`;
 };
 
 // 添加生长记录
@@ -431,7 +552,7 @@ const submitRecord = async () => {
     showRecordDialog.value = false;
     viewPlant(currentPlant.value);
     recordForm.value = {
-      record_date: new Date().toISOString().split('T')[0],
+      record_date: toLocalDateString(),
       stage: 'seedling',
       height_cm: undefined,
       leaf_count: undefined,
@@ -480,17 +601,15 @@ const getStageType = (stage?: string) => {
   return map[stage || ''] || '';
 };
 
-const handleLogout = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-  localStorage.removeItem('username');
-  router.push('/login');
-};
-
-onMounted(() => {
-  loadClasses();
-  loadDevices();
-  loadPlants();
+onMounted(async () => {
+  try {
+    await ensureLoaded();
+  } catch {
+    // 401/403 会由全局拦截器/页面状态面板处理
+  }
+  await loadClasses();
+  await loadDevices();
+  await loadPlants();
 });
 </script>
 
@@ -579,6 +698,25 @@ onMounted(() => {
   color: white;
 }
 
+.cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px 8px 0 0;
+}
+
+.cover-preview-wrap {
+  margin-top: 8px;
+}
+
+.cover-preview {
+  width: 120px;
+  height: 90px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid #dcdfe6;
+}
+
 .plant-name {
   margin: 12px 0 4px;
   font-size: 16px;
@@ -645,6 +783,13 @@ onMounted(() => {
 
 .info-avatar .el-icon {
   font-size: 60px;
+}
+
+.detail-cover-img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 .plant-info h3 {

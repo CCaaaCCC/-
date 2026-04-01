@@ -2,12 +2,13 @@
 清空教学内容数据脚本
 
 使用方法：
-    .venv\Scripts\python.exe clear_contents.py
+    .venv/Scripts/python.exe clear_contents.py
 
 注意：此脚本会删除所有教学内容和分类！
 """
 
-from main import engine, SessionLocal, ContentCategory, TeachingContent, StudentLearningRecord, ContentComment
+from app.db.session import engine, SessionLocal
+from app.db.models import ContentCategory, TeachingContent, StudentLearningRecord, ContentComment
 
 def clear_contents():
     db = SessionLocal()
@@ -34,9 +35,24 @@ def clear_contents():
         db.query(ContentComment).delete()
         db.query(StudentLearningRecord).delete()
         db.query(TeachingContent).delete()
-        db.query(ContentCategory).delete()
-        
-        db.commit()
+
+        # ContentCategory 使用自引用外键 parent_id，不能一次性删除所有行。
+        # 按叶子结点（没有子分类的条目）循环删除，直到没有剩余分类。
+        while True:
+            leaves = db.query(ContentCategory).filter(~ContentCategory.children.any()).all()
+            if not leaves:
+                break
+            for leaf in leaves:
+                db.delete(leaf)
+            db.commit()
+
+        # 如果仍有残留（理论上不会，但为保险起见），先将 parent_id 置空再删除。
+        remaining = db.query(ContentCategory).count()
+        if remaining:
+            db.query(ContentCategory).update({ContentCategory.parent_id: None})
+            db.commit()
+            db.query(ContentCategory).delete()
+            db.commit()
         
         print("\n✅ 已清空所有教学内容数据")
         print("   现在可以运行 init_sample_contents.py 重新初始化示例内容")

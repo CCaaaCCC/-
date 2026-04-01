@@ -2,12 +2,13 @@
 初始化示例教学内容脚本
 
 使用方法：
-    .venv\Scripts\python.exe init_sample_contents.py
+    .venv/Scripts/python.exe init_sample_contents.py
 
 此脚本用于在数据库中创建示例教学内容，供教学演示使用。
 """
 
-from main import engine, SessionLocal, ContentCategory, TeachingContent, User
+from app.db.session import engine, SessionLocal
+from app.db.models import ContentCategory, TeachingContent, User
 
 def init_sample_contents():
     db = SessionLocal()

@@ -1,0 +1,280 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  /* Brand palette */
+  --color-plant-500: #2d9d78;
+  --color-plant-600: #258766;
+  --color-plant-700: #1f7357;
+  --color-sun-500: #f59e0b;
+  --color-sun-600: #db8e0a;
+  --color-soil-500: #8b5e3c;
+
+  /* Semantic states */
+  --color-success: #3ba76b;
+  --color-warning: #f3b74f;
+  --color-danger: #e2645f;
+
+  /* Neutral surface system */
+  --bg-page: #f8faf9;
+  --bg-surface: #f2f7f4;
+  --bg-card: #fbfdfc;
+  --text-main: #1e2d26;
+  --text-secondary: #5f7468;
+  --text-tertiary: #839488;
+
+  /* Shape and depth */
+  --radius-card: 12px;
+  --radius-control: 10px;
+  --shadow-soft: 0 6px 18px rgba(26, 68, 52, 0.08);
+  --shadow-soft-hover: 0 10px 24px rgba(26, 68, 52, 0.12);
+
+  /* Typography scale */
+  --font-family-base: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-size-h1: 2rem;
+  --line-height-h1: 1.25;
+  --font-weight-h1: 700;
+  --font-size-h2: 1.75rem;
+  --line-height-h2: 1.3;
+  --font-weight-h2: 700;
+  --font-size-h3: 1.5rem;
+  --line-height-h3: 1.35;
+  --font-weight-h3: 650;
+  --font-size-h4: 1.25rem;
+  --line-height-h4: 1.4;
+  --font-weight-h4: 650;
+  --font-size-h5: 1.125rem;
+  --line-height-h5: 1.45;
+  --font-weight-h5: 600;
+  --font-size-h6: 1rem;
+  --line-height-h6: 1.5;
+  --font-weight-h6: 600;
+  --font-size-body: 1rem;
+  --line-height-body: 1.65;
+  --font-size-caption: 0.75rem;
+  --line-height-caption: 1.45;
+
+  /* Element Plus token overrides */
+  --el-color-primary: var(--color-plant-500);
+  --el-color-primary-dark-2: var(--color-plant-700);
+  --el-color-primary-light-3: #4cb292;
+  --el-color-primary-light-5: #70c3a7;
+  --el-color-primary-light-7: #97d5bf;
+  --el-color-primary-light-8: #b1e0cf;
+  --el-color-primary-light-9: #d3efe5;
+
+  --el-color-success: var(--color-success);
+  --el-color-success-light-3: #6abc8b;
+  --el-color-success-light-5: #8fcdab;
+  --el-color-success-light-8: #d2edde;
+  --el-color-success-light-9: #e4f5ea;
+
+  --el-color-warning: var(--color-warning);
+  --el-color-warning-light-3: #f5c776;
+  --el-color-warning-light-5: #f8d9a0;
+  --el-color-warning-light-8: #fcefd2;
+  --el-color-warning-light-9: #fdf6e5;
+
+  --el-color-danger: var(--color-danger);
+  --el-color-danger-light-3: #ea8b87;
+  --el-color-danger-light-5: #efaaa7;
+  --el-color-danger-light-8: #f8dbd9;
+  --el-color-danger-light-9: #fbeae9;
+
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-page: var(--bg-page);
+  --el-fill-color-blank: #f7fbf9;
+  --el-text-color-primary: var(--text-main);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--text-tertiary);
+
+  --el-border-color: rgba(45, 157, 120, 0.16);
+  --el-border-color-light: rgba(45, 157, 120, 0.1);
+  --el-border-radius-base: var(--radius-control);
+  --el-border-radius-round: 999px;
+
+  --el-box-shadow-light: var(--shadow-soft);
+  --el-box-shadow: 0 12px 28px rgba(26, 68, 52, 0.14);
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  color: var(--text-main);
+  background: radial-gradient(circle at 0 0, rgba(45, 157, 120, 0.08), transparent 24%),
+    radial-gradient(circle at 100% 0, rgba(245, 158, 11, 0.08), transparent 20%),
+    linear-gradient(170deg, var(--bg-page) 0%, var(--bg-surface) 100%);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  color: var(--text-main);
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  line-height: var(--line-height-h1);
+  font-weight: var(--font-weight-h1);
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  line-height: var(--line-height-h2);
+  font-weight: var(--font-weight-h2);
+}
+
+h3 {
+  font-size: var(--font-size-h3);
+  line-height: var(--line-height-h3);
+  font-weight: var(--font-weight-h3);
+}
+
+h4 {
+  font-size: var(--font-size-h4);
+  line-height: var(--line-height-h4);
+  font-weight: var(--font-weight-h4);
+}
+
+h5 {
+  font-size: var(--font-size-h5);
+  line-height: var(--line-height-h5);
+  font-weight: var(--font-weight-h5);
+}
+
+h6 {
+  font-size: var(--font-size-h6);
+  line-height: var(--line-height-h6);
+  font-weight: var(--font-weight-h6);
+}
+
+p {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+small,
+.caption {
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  color: var(--text-tertiary);
+}
+
+.el-card {
+  border-radius: var(--radius-card);
+  border: 1px solid rgba(45, 157, 120, 0.08);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-soft);
+}
+
+.el-card:hover {
+  box-shadow: var(--shadow-soft-hover);
+}
+
+.el-button,
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper,
+.el-date-editor.el-input__wrapper,
+.el-dialog,
+.el-popover {
+  border-radius: var(--radius-control);
+}
+
+.el-dialog {
+  border-radius: var(--radius-card);
+}
+
+.el-table,
+.el-table th.el-table__cell,
+.el-table tr,
+.el-table__body,
+.el-table__header {
+  background-color: transparent;
+}
+
+.el-table {
+  --el-table-header-bg-color: rgba(45, 157, 120, 0.08);
+  --el-table-row-hover-bg-color: rgba(45, 157, 120, 0.06);
+  border-radius: var(--radius-control);
+}
+
+.el-alert {
+  border-radius: var(--radius-control);
+  border: none;
+}
+
+.el-alert--success {
+  border-left: 4px solid var(--color-success);
+}
+
+.el-alert--warning {
+  border-left: 4px solid var(--color-warning);
+}
+
+.el-alert--error {
+  border-left: 4px solid var(--color-danger);
+}
+
+.el-tag--success {
+  --el-tag-bg-color: rgba(59, 167, 107, 0.12);
+  --el-tag-text-color: #2e7f52;
+}
+
+.el-tag--warning {
+  --el-tag-bg-color: rgba(243, 183, 79, 0.16);
+  --el-tag-text-color: #946908;
+}
+
+.el-tag--danger {
+  --el-tag-bg-color: rgba(226, 100, 95, 0.14);
+  --el-tag-text-color: #ab413c;
+}
+
+.app-page-title {
+  letter-spacing: 0.02em;
+  font-weight: 700;
+}
+
+.app-glass-card {
+  background: rgba(251, 253, 252, 0.88);
+  border: 1px solid rgba(45, 157, 120, 0.1);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(8px);
+}
+
+.status-band {
+  border-radius: var(--radius-control);
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.status-band--success {
+  background: rgba(59, 167, 107, 0.16);
+  color: #2e7f52;
+}
+
+.status-band--warning {
+  background: rgba(243, 183, 79, 0.2);
+  color: #946908;
+}
+
+.status-band--danger {
+  background: rgba(226, 100, 95, 0.18);
+  color: #ab413c;
+}

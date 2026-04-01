@@ -34,7 +34,8 @@ try:
 
         # 2. 发送 POST 请求到后端
         try:
-            response = requests.post(SERVER_URL, json=data, timeout=5)
+            headers = {"X-Device-Token": "default_secret_device_token"}
+            response = requests.post(SERVER_URL, json=data, headers=headers, timeout=5)
             if response.status_code == 200:
                 res_json = response.json()
                 commands = res_json.get("commands", {})
