@@ -1,13 +1,17 @@
 // 从 index.ts 导入 API 函数
 export {
     getCategories,
+    getCategoriesTree,
     createCategory,
+    updateCategory,
+    deleteCategory,
     getContents,
     getContent,
     createContent,
     updateContent,
     deleteContent,
     publishContent,
+    polishTeachingContent,
     getMyLearning,
     startLearning,
     completeLearning,
@@ -33,6 +37,20 @@ export {
     removeGroupMember,
     getClasses,
     getDevices
+} from './index';
+
+export type {
+    ContentAIPolishResult,
+    ContentCategory,
+    ContentComment,
+    LearningStatsResponse,
+    StudentLearningRecord,
+    StudentProgress,
+    TeachingContentCreatePayload,
+    TeachingContentDetail,
+    TeachingContentListItem,
+    TeachingContentType,
+    TeachingContentUpdatePayload,
 } from './index';
 
 // ================= 类型定义 =================

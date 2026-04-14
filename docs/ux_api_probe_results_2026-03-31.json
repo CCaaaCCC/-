@@ -11,16 +11,16 @@
         "id": 1,
         "name": "Default greenhouse",
         "status": 1,
-        "pump_state": 0,
-        "fan_state": 0,
-        "light_state": 0
+        "pump_state": 1,
+        "fan_state": 1,
+        "light_state": 1
       },
       "telemetry": {
-        "temp": 32.57,
-        "humidity": 45.5,
-        "soil_moisture": 39.84,
-        "light": 428.0,
-        "timestamp": "2026-04-01T05:28:07"
+        "temp": 32.18,
+        "humidity": 44.05,
+        "soil_moisture": 45.73,
+        "light": 30.0,
+        "timestamp": "2026-04-12T07:48:58"
       },
       "plants": [
         {
@@ -79,7 +79,7 @@
     ],
     "pass": true,
     "payload": {
-      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImV4cCI6MTc3NTAyMzA5M30.wz4lJzlCwB57KXT0g8v907tO5O0fIBKEULxrWSoI-MQ",
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImV4cCI6MTc3NTk4MTk0MX0.IDNvNxMX59SRPQli68dwXp6BoTQzXkV7X9LEqLddrCo",
       "token_type": "bearer",
       "role": "admin"
     }
@@ -92,7 +92,7 @@
     ],
     "pass": true,
     "payload": {
-      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZWFjaGVyIiwicm9sZSI6InRlYWNoZXIiLCJleHAiOjE3NzUwMjMwOTN9.FWM8OOl4nKcfS3oro35bYwUxcVy9k3Dk64jmxF64f64",
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZWFjaGVyIiwicm9sZSI6InRlYWNoZXIiLCJleHAiOjE3NzU5ODE5NDF9.PAiTrg_0HtLUJmQV-YrewE9ztXNxcGtZoM5oCZdE0v8",
       "token_type": "bearer",
       "role": "teacher"
     }
@@ -105,7 +105,7 @@
     ],
     "pass": true,
     "payload": {
-      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdHVkZW50Iiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NzUwMjMwOTN9._2s7Pc2qOfCEEJ4G38hTEQhbfvl9iZx7lroWzJx5pqU",
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdHVkZW50Iiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NzU5ODE5NDJ9.rfyXGDRcP5TxcCoGLWJoNgDnXGroQH5N5l4wLtLCqhE",
       "token_type": "bearer",
       "role": "student"
     }
@@ -122,7 +122,7 @@
       "username": "admin",
       "role": "admin",
       "real_name": "管理员",
-      "avatar_url": null,
+      "avatar_url": "/uploads/avatars/20260401080029_ca42a5c8a8f1474fb1ffa18d5021df1c.jpg",
       "email": "example@email.com",
       "class_id": null,
       "class_name": null,
@@ -134,57 +134,21 @@
       },
       "upcoming_assignments": [
         {
-          "title": "UX闭环测试任务-035710",
+          "title": "UX闭环测试任务-150109",
           "description": "自动探测脚本创建",
           "device_id": 1,
           "class_id": 4,
-          "start_date": "2026-03-31T03:57:10",
-          "due_date": "2026-04-02T03:57:10",
+          "start_date": "2026-04-12T15:01:09",
+          "due_date": "2026-04-14T15:01:09",
           "requirement": "观察并记录环境变化",
           "template": null,
           "is_published": true,
-          "id": 11,
+          "id": 20,
           "teacher_id": 2,
           "teacher_name": null,
           "device_name": null,
           "class_name": "一年级11班",
-          "created_at": "2026-03-30T19:57:11",
-          "submission_count": 0
-        },
-        {
-          "title": "UX闭环测试任务-035736",
-          "description": "自动探测脚本创建",
-          "device_id": 1,
-          "class_id": 4,
-          "start_date": "2026-03-31T03:57:36",
-          "due_date": "2026-04-02T03:57:36",
-          "requirement": "观察并记录环境变化",
-          "template": null,
-          "is_published": true,
-          "id": 12,
-          "teacher_id": 2,
-          "teacher_name": null,
-          "device_name": null,
-          "class_name": "一年级11班",
-          "created_at": "2026-03-30T19:57:36",
-          "submission_count": 0
-        },
-        {
-          "title": "UX闭环测试任务-041056",
-          "description": "自动探测脚本创建",
-          "device_id": 1,
-          "class_id": 4,
-          "start_date": "2026-03-31T04:10:56",
-          "due_date": "2026-04-02T04:10:56",
-          "requirement": "观察并记录环境变化",
-          "template": null,
-          "is_published": true,
-          "id": 13,
-          "teacher_id": 2,
-          "teacher_name": null,
-          "device_name": null,
-          "class_name": "一年级11班",
-          "created_at": "2026-03-30T20:10:57",
+          "created_at": "2026-04-12T07:01:09",
           "submission_count": 0
         },
         {
@@ -244,15 +208,15 @@
       "id": 3,
       "username": "student",
       "role": "student",
-      "real_name": "alian",
-      "avatar_url": null,
+      "real_name": "test_student01",
+      "avatar_url": "/uploads/avatars/20260411131005_d3726f1bca934211baec1f5a5c6c8b21.webp",
       "email": "230407022@stumail.qztc.edu.cn",
       "class_id": 4,
       "class_name": "一年级11班",
       "todos": {
         "pending_assignments": 0,
         "overdue_assignments": 0,
-        "assignments_to_grade": 3,
+        "assignments_to_grade": 1,
         "plants_in_class": 4
       },
       "upcoming_assignments": []
@@ -393,7 +357,7 @@
           "class_id": null,
           "is_active": true,
           "created_at": "2026-03-24T01:26:13",
-          "updated_at": "2026-04-01T05:26:17",
+          "updated_at": "2026-04-01T08:00:30",
           "class_name": null
         },
         {
@@ -415,13 +379,13 @@
           "username": "student",
           "role": "student",
           "email": "230407022@stumail.qztc.edu.cn",
-          "real_name": "alian",
+          "real_name": "test_student01",
           "student_id": "240407023",
           "teacher_id": null,
           "class_id": 4,
           "is_active": true,
           "created_at": "2026-03-24T01:26:13",
-          "updated_at": "2026-04-01T05:26:17",
+          "updated_at": "2026-04-11T13:10:35",
           "class_name": "一年级11班"
         },
         {
@@ -452,21 +416,21 @@
     ],
     "pass": true,
     "payload": {
-      "title": "UX闭环测试任务-132813",
+      "title": "UX闭环测试任务-154902",
       "description": "自动探测脚本创建",
       "device_id": 1,
       "class_id": 4,
-      "start_date": "2026-04-01T13:28:13",
-      "due_date": "2026-04-03T13:28:13",
+      "start_date": "2026-04-12T15:49:02",
+      "due_date": "2026-04-14T15:49:02",
       "requirement": "观察并记录环境变化",
       "template": null,
       "is_published": true,
-      "id": 19,
+      "id": 21,
       "teacher_id": 2,
       "teacher_name": "详",
       "device_name": "Default greenhouse",
       "class_name": "一年级11班",
-      "created_at": "2026-04-01T05:28:14",
+      "created_at": "2026-04-12T07:49:03",
       "submission_count": 0
     }
   },
@@ -479,22 +443,40 @@
     "pass": true,
     "payload": [
       {
-        "title": "UX闭环测试任务-132813",
+        "title": "UX闭环测试任务-154902",
         "description": "自动探测脚本创建",
         "device_id": 1,
         "class_id": 4,
-        "start_date": "2026-04-01T13:28:13",
-        "due_date": "2026-04-03T13:28:13",
+        "start_date": "2026-04-12T15:49:02",
+        "due_date": "2026-04-14T15:49:02",
         "requirement": "观察并记录环境变化",
         "template": null,
         "is_published": true,
-        "id": 19,
+        "id": 21,
         "teacher_id": 2,
         "teacher_name": "详",
         "device_name": "Default greenhouse",
         "class_name": "一年级11班",
-        "created_at": "2026-04-01T05:28:14",
+        "created_at": "2026-04-12T07:49:03",
         "submission_count": 0
+      },
+      {
+        "title": "UX闭环测试任务-150109",
+        "description": "自动探测脚本创建",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-04-12T15:01:09",
+        "due_date": "2026-04-14T15:01:09",
+        "requirement": "观察并记录环境变化",
+        "template": null,
+        "is_published": true,
+        "id": 20,
+        "teacher_id": 2,
+        "teacher_name": "详",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "created_at": "2026-04-12T07:01:09",
+        "submission_count": 1
       },
       {
         "title": "观察温度对植物生长的影响",
@@ -513,60 +495,6 @@
         "class_name": "一年级11班",
         "created_at": "2026-04-01T03:30:50",
         "submission_count": 1
-      },
-      {
-        "title": "UX闭环测试任务-041056",
-        "description": "自动探测脚本创建",
-        "device_id": 1,
-        "class_id": 4,
-        "start_date": "2026-03-31T04:10:56",
-        "due_date": "2026-04-02T04:10:56",
-        "requirement": "观察并记录环境变化",
-        "template": null,
-        "is_published": true,
-        "id": 13,
-        "teacher_id": 2,
-        "teacher_name": "详",
-        "device_name": "Default greenhouse",
-        "class_name": "一年级11班",
-        "created_at": "2026-03-30T20:10:57",
-        "submission_count": 1
-      },
-      {
-        "title": "UX闭环测试任务-035736",
-        "description": "自动探测脚本创建",
-        "device_id": 1,
-        "class_id": 4,
-        "start_date": "2026-03-31T03:57:36",
-        "due_date": "2026-04-02T03:57:36",
-        "requirement": "观察并记录环境变化",
-        "template": null,
-        "is_published": true,
-        "id": 12,
-        "teacher_id": 2,
-        "teacher_name": "详",
-        "device_name": "Default greenhouse",
-        "class_name": "一年级11班",
-        "created_at": "2026-03-30T19:57:36",
-        "submission_count": 1
-      },
-      {
-        "title": "UX闭环测试任务-035710",
-        "description": "自动探测脚本创建",
-        "device_id": 1,
-        "class_id": 4,
-        "start_date": "2026-03-31T03:57:10",
-        "due_date": "2026-04-02T03:57:10",
-        "requirement": "观察并记录环境变化",
-        "template": null,
-        "is_published": true,
-        "id": 11,
-        "teacher_id": 2,
-        "teacher_name": "详",
-        "device_name": "Default greenhouse",
-        "class_name": "一年级11班",
-        "created_at": "2026-03-30T19:57:11",
-        "submission_count": 1
       }
     ]
   },
@@ -578,11 +506,11 @@
     ],
     "pass": true,
     "payload": {
-      "experiment_date": "2026-04-01",
+      "experiment_date": "2026-04-12",
       "observations": "温度较稳定，土壤湿度略降。",
       "conclusion": "建议增加短时补水。",
-      "id": 9,
-      "assignment_id": 19,
+      "id": 11,
+      "assignment_id": 21,
       "student_id": 3,
       "student_name": null,
       "status": "submitted",
@@ -597,9 +525,9 @@
       "report_file_path": null,
       "report_file_size": null,
       "graded_at": null,
-      "submitted_at": "2026-04-01T05:28:14",
-      "created_at": "2026-04-01T05:28:14",
-      "updated_at": "2026-04-01T05:28:14"
+      "submitted_at": "2026-04-12T07:49:03",
+      "created_at": "2026-04-12T07:49:03",
+      "updated_at": "2026-04-12T07:49:03"
     }
   },
   {
@@ -611,11 +539,11 @@
     "pass": true,
     "payload": [
       {
-        "experiment_date": "2026-04-01",
+        "experiment_date": "2026-04-12",
         "observations": "温度较稳定，土壤湿度略降。",
         "conclusion": "建议增加短时补水。",
-        "id": 9,
-        "assignment_id": 19,
+        "id": 11,
+        "assignment_id": 21,
         "student_id": 3,
         "student_name": "student",
         "status": "submitted",
@@ -630,9 +558,9 @@
         "report_file_path": null,
         "report_file_size": null,
         "graded_at": null,
-        "submitted_at": "2026-04-01T05:28:14",
-        "created_at": "2026-04-01T05:28:14",
-        "updated_at": "2026-04-01T05:28:14"
+        "submitted_at": "2026-04-12T07:49:03",
+        "created_at": "2026-04-12T07:49:03",
+        "updated_at": "2026-04-12T07:49:03"
       }
     ]
   },
@@ -655,11 +583,11 @@
     ],
     "pass": true,
     "payload": {
-      "experiment_date": "2026-04-01",
+      "experiment_date": "2026-04-12",
       "observations": "温度较稳定，土壤湿度略降。",
       "conclusion": "建议增加短时补水。",
-      "id": 9,
-      "assignment_id": 19,
+      "id": 11,
+      "assignment_id": 21,
       "student_id": 3,
       "student_name": "student",
       "status": "graded",
@@ -673,10 +601,10 @@
       "report_file_name": null,
       "report_file_path": null,
       "report_file_size": null,
-      "graded_at": "2026-04-01T05:28:14",
-      "submitted_at": "2026-04-01T05:28:14",
-      "created_at": "2026-04-01T05:28:14",
-      "updated_at": "2026-04-01T05:28:14"
+      "graded_at": "2026-04-12T07:49:03",
+      "submitted_at": "2026-04-12T07:49:03",
+      "created_at": "2026-04-12T07:49:03",
+      "updated_at": "2026-04-12T07:49:03"
     }
   },
   {
@@ -720,8 +648,14 @@
     ],
     "pass": true,
     "payload": {
-      "answer": "你的问题是：请判断当前环境是否适宜植物生长。结合当前大棚数据，我的结论是：光照较弱，植物光合作用效率可能不足。",
-      "source": "rule-based"
+      "answer": "根据当前温室数据：\n\n- **温度**：32.18°C  \n  这个温度对许多常见植物来说偏高。大多数植物适宜的生长温度在18-28°C之间，32°C可能引起热应激，尤其对喜凉植物不利。\n\n- **湿度**：44.05%  \n  这个湿度水平对多数植物来说偏低。植物通常需要50-70%的相对湿度，44%可能导致叶片水分蒸发过快，影响生长。\n\n- **土壤湿度**：45.73%  \n  这个数值对多数植物来说属于中等偏干的范围，具体取决于植物种类。一般建议保持在50-70%之间，45.73%可能需要适当增加浇水。\n\n- **光照**：30.00 lx  \n  这个光照强度非常低，远低于植物正常生长所需（通常需要数千到数万lx）。可能表示阴天、夜晚或遮光过度，光合作用会受到严重限制。\n\n**综合判断**：当前环境**不适宜**大多数植物生长。主要问题是光照严重不足，温度偏高，湿度过低。建议增加光照、降低温度并提高湿度，同时根据植物种类调整土壤湿度。",
+      "source": "deepseek-langchain",
+      "model": "deepseek-chat",
+      "deep_thinking": false,
+      "web_search_enabled": false,
+      "web_search_used": false,
+      "web_search_notice": null,
+      "citations": []
     }
   },
   {
@@ -732,6 +666,41 @@
       403
     ],
     "pass": true,
-    "payload": []
+    "payload": [
+      {
+        "id": 2,
+        "group_name": "学习小组01",
+        "class_id": 4,
+        "class_name": "一年级11班",
+        "device_id": 1,
+        "device_name": "Default greenhouse",
+        "description": "test",
+        "member_count": 3,
+        "members": [
+          {
+            "id": 1,
+            "student_id": 4,
+            "username": "_240407022",
+            "student_name": "谢卓辰",
+            "role": "recorder"
+          },
+          {
+            "id": 2,
+            "student_id": 3,
+            "username": "student",
+            "student_name": "test_student01",
+            "role": "leader"
+          },
+          {
+            "id": 3,
+            "student_id": 11,
+            "username": "smoke_student",
+            "student_name": "smoke_student",
+            "role": "recorder"
+          }
+        ],
+        "created_at": "2026-04-11T04:37:06"
+      }
+    ]
   }
 ]

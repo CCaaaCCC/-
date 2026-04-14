@@ -1,5 +1,18 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { ElMessage } from 'element-plus';
+import { getAuthToken, getUserRole } from '../utils/authSession';
+
+const CHUNK_RELOAD_GUARD_KEY = 'router:chunk-reload-once';
+
+const isChunkLoadError = (error: unknown): boolean => {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  return (
+    message.includes('failed to fetch dynamically imported module')
+    || message.includes('importing a module script failed')
+    || message.includes('loading chunk')
+    || message.includes('dynamic import')
+  );
+};
 
 const routes = [
   {
@@ -11,7 +24,7 @@ const routes = [
     path: '/',
     name: 'HomeRedirect',
     redirect: () => {
-      const role = localStorage.getItem('role');
+      const role = getUserRole();
       if (role === 'admin') return '/home/admin';
       if (role === 'teacher') return '/home/teacher';
       return '/home/student';
@@ -57,19 +70,19 @@ const routes = [
   {
     path: '/assignments',
     name: 'Assignments',
-    component: () => import('../views/Assignments.vue'),
+    component: () => import('../views/Assignments/index.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/plants',
     name: 'Plants',
-    component: () => import('../views/Plants.vue'),
+    component: () => import('../views/Plants/index.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/groups',
     name: 'Groups',
-    component: () => import('../views/Groups.vue'),
+    component: () => import('../views/Groups/index.vue'),
     meta: { requiresAuth: true }
   },
   {
@@ -104,8 +117,8 @@ const router = createRouter({
 });
 
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token');
-  const role = localStorage.getItem('role');
+  const token = getAuthToken();
+  const role = getUserRole();
 
   // 大屏展示页面不需要认证
   if (to.path === '/display') {
@@ -124,6 +137,32 @@ router.beforeEach((to, from, next) => {
   } else {
     next();
   }
+});
+
+router.afterEach(() => {
+  if (typeof window !== 'undefined') {
+    sessionStorage.removeItem(CHUNK_RELOAD_GUARD_KEY);
+  }
+});
+
+router.onError((error) => {
+  console.error('[router:error]', error);
+
+  if (typeof window !== 'undefined' && isChunkLoadError(error)) {
+    const hasRetried = sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY) === '1';
+    if (!hasRetried) {
+      sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1');
+      ElMessage.warning('页面资源已更新，正在自动刷新...');
+      window.location.reload();
+      return;
+    }
+
+    sessionStorage.removeItem(CHUNK_RELOAD_GUARD_KEY);
+    ElMessage.error('页面资源加载失败，请手动刷新后重试');
+    return;
+  }
+
+  ElMessage.error('页面跳转失败，请稍后重试');
 });
 
 export default router;

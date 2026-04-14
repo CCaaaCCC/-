@@ -17,15 +17,35 @@
             :value="device.id"
           />
         </el-select>
-        <el-button class="action-btn" type="primary" plain @click="$router.push('/display')">📊 数据大屏</el-button>
-        <el-button class="action-btn" type="info" plain @click="$router.push('/profile')">👤 个人中心</el-button>
-        <el-button class="action-btn" type="success" plain @click="$router.push('/assignments')">📝 实验报告</el-button>
-        <el-button class="action-btn" type="info" plain @click="$router.push('/plants')">🌱 植物档案</el-button>
-        <el-button class="action-btn" type="success" plain @click="$router.push('/teaching')">📚 教学资源</el-button>
-        <el-button class="action-btn" type="primary" plain @click="$router.push('/analytics')" v-if="canControl">📈 教学分析</el-button>
-        <el-button class="action-btn" type="warning" plain @click="$router.push('/users')" v-if="userRole === 'admin'">👤 用户管理</el-button>
-        <el-button class="action-btn" type="primary" plain @click="showExportDialog = true" :disabled="!selectedDeviceId">导出数据</el-button>
-        <el-button class="action-btn" type="danger" plain @click="handleLogout">退出登录</el-button>
+
+        <div class="primary-actions">
+          <el-button class="action-btn" type="success" plain @click="navigateTo('/assignments')">实验报告</el-button>
+          <el-button class="action-btn" type="success" plain @click="navigateTo('/teaching')">教学资源</el-button>
+          <el-button class="action-btn" type="primary" plain @click="navigateTo('/display')">数据大屏</el-button>
+        </div>
+
+        <el-dropdown class="more-menu" trigger="click" @command="handleShortcutCommand">
+          <el-button class="action-btn" plain>
+            更多功能
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                v-for="item in shortcutActions"
+                :key="item.path"
+                :command="item.path"
+              >
+                {{ item.label }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
+        <el-button class="action-btn" type="primary" plain @click="showExportDialog = true" :disabled="!selectedDeviceId">
+          导出数据
+        </el-button>
+        <el-button class="action-btn action-btn--logout" type="danger" plain @click="handleLogout">退出登录</el-button>
       </div>
     </div>
 
@@ -122,29 +142,6 @@
       </div>
 
       <div class="role-panels">
-        <el-card class="ai-panel" shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>AI 科学助手（Qwen）</span>
-              <el-tag size="small" type="info">STEAM</el-tag>
-            </div>
-          </template>
-          <div class="ai-input-row">
-            <el-input
-              v-model="aiQuestion"
-              placeholder="例如：为什么现在土壤湿度低，植物叶片会下垂？"
-              @keyup.enter="askAI"
-            />
-            <el-button type="primary" :loading="aiLoading" @click="askAI">提问</el-button>
-          </div>
-          <div class="ai-answer" v-if="aiAnswer">
-            {{ aiAnswer }}
-          </div>
-          <div class="ai-hint" v-else>
-            你可以基于当前实时数据提问，AI 会给出中小学生可理解的解释和建议。
-          </div>
-        </el-card>
-
         <el-card v-if="isStudent" class="student-missions" shadow="hover">
           <template #header>
             <div class="card-header">
@@ -258,6 +255,7 @@ import {
   controlDevice,
   exportTelemetry,
   askScienceAssistant,
+  streamScienceAssistant,
   triggerDemoScenario,
   createTelemetrySocket,
   type DemoScenario,
@@ -267,14 +265,40 @@ import {
 } from '../api';
 import TelemetryChart from './TelemetryChart.vue';
 import { Thermometer, Droplets, Sprout, Sun } from 'lucide-vue-next';
+import { ArrowDown } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
+import { getErrorMessage } from '../utils/error';
+import { clearAuthSession } from '../utils/authSession';
 
 type MetricKey = 'temp' | 'humidity' | 'soil_moisture' | 'light';
+
+type AIRole = 'user' | 'assistant';
+
+type AIMessageStatus = 'streaming' | 'done' | 'error';
+
+type AIChatMessage = {
+  id: number;
+  role: AIRole;
+  content: string;
+  source?: string;
+  status: AIMessageStatus;
+};
+
+type PromptCard = {
+  title: string;
+  desc: string;
+  question: string;
+};
 
 type MetricStatus = {
   statusText: string;
   tagType: 'success' | 'warning' | 'danger' | 'info';
   stripColor: string;
+};
+
+type ShortcutAction = {
+  label: string;
+  path: string;
 };
 
 const router = useRouter();
@@ -286,6 +310,9 @@ const userRole = ref(localStorage.getItem('role') || 'student');
 let timer: ReturnType<typeof setInterval> | null = null;
 let ws: WebSocket | null = null;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let aiAbortController: AbortController | null = null;
+let wsReconnectAttempts = 0;
+let isPageUnmounted = false;
 const wsConnected = ref(false);
 const fetchErrorDetail = ref('');
 const pulseFlags = ref<Record<MetricKey, boolean>>({
@@ -301,10 +328,105 @@ const pumpActive = ref(false);
 const fanActive = ref(false);
 const lightActive = ref(false);
 
-const aiQuestion = ref('为什么现在的环境会影响植物生长？');
-const aiAnswer = ref('');
+const aiQuestion = ref('');
+const aiMessages = ref<AIChatMessage[]>([]);
 const aiLoading = ref(false);
+const lastAskedQuestion = ref('');
+const promptSetIndex = ref(0);
+const aiChatWindowRef = ref<HTMLElement | null>(null);
 const scenarioLoading = ref<DemoScenario | ''>('');
+const quickQuestions = [
+  { label: '诊断：是否要浇水', question: '现在要不要浇水？为什么？' },
+  { label: '实验：蒸腾作用', question: '温度变化会怎样影响植物蒸腾？' },
+  { label: '调参：环境优化', question: '如何把环境调到更适合生长？' },
+  { label: '课堂：给学生讲解', question: '请用适合五年级学生的话解释当前环境变化。' }
+];
+
+const promptSets: PromptCard[][] = [
+  [
+    {
+      title: '实时风险诊断',
+      desc: '快速判断当前环境是否存在风险并给出建议。',
+      question: '请结合当前数据做一次风险诊断，并给出三条可执行建议。'
+    },
+    {
+      title: '课堂讲解脚本',
+      desc: '生成可直接讲给学生听的 1 分钟讲解稿。',
+      question: '请把当前监测数据整理成 1 分钟课堂讲解稿，语言适合小学生。'
+    },
+    {
+      title: '实验任务设计',
+      desc: '基于当前环境生成可操作的探究任务。',
+      question: '请基于当前环境设计 2 个可在课堂完成的探究任务，并说明观察指标。'
+    }
+  ],
+  [
+    {
+      title: '异常排查路径',
+      desc: '按优先级列出排查步骤，便于课堂演示。',
+      question: '如果当前状态异常，请按优先级给出排查步骤和每一步的判据。'
+    },
+    {
+      title: '学生提问应答',
+      desc: '生成教师可直接使用的问答清单。',
+      question: '请生成 5 个学生可能会问的问题，并给出简明回答。'
+    },
+    {
+      title: '作业点评草稿',
+      desc: '给出观察记录应包含的关键点。',
+      question: '请给出本次观察作业的评分维度和高分示例要点。'
+    }
+  ],
+  [
+    {
+      title: '对照实验建议',
+      desc: '围绕温度/湿度/光照设计对照变量。',
+      question: '请给出一个围绕温度和湿度的对照实验方案，包含步骤和注意事项。'
+    },
+    {
+      title: '操作口令生成',
+      desc: '将建议转成课堂可执行的短指令。',
+      question: '请把当前环境调优建议写成 6 条简短操作口令。'
+    },
+    {
+      title: '科普拓展问题',
+      desc: '延伸到可讨论的科学原理问题。',
+      question: '请给出 3 个和当前数据相关的科学拓展问题，并给简短提示。'
+    }
+  ]
+];
+
+const capabilityPresets = [
+  { label: '大纲生成', prompt: '请为“当前大棚环境分析”生成一份课堂讲解大纲。' },
+  { label: '代码生成', prompt: '请给出一个用于读取并可视化温湿度数据的 Python 示例代码。' },
+  { label: '学术检索', prompt: '请列出与当前环境指标相关的 3 个科学关键词及检索方向。' },
+  { label: '实验点评', prompt: '请给出本节课实验表现的点评模板（优点/改进建议）。' }
+];
+
+const activePromptSet = computed(() => {
+  const idx = promptSetIndex.value % promptSets.length;
+  return promptSets[idx];
+});
+
+const followUpQuestions = computed(() => {
+  const latestAssistant = [...aiMessages.value].reverse().find((m) => m.role === 'assistant' && m.status !== 'streaming');
+  if (!latestAssistant) return [] as string[];
+  return [
+    '如果要优先处理一个指标，应该先处理哪个？',
+    '请把建议改写成学生可执行的三步任务。',
+    '请告诉我如何在 10 分钟内验证这条结论。'
+  ];
+});
+
+const canRegenerate = computed(() => Boolean(lastAskedQuestion.value));
+
+const scrollAIToBottom = () => {
+  requestAnimationFrame(() => {
+    const el = aiChatWindowRef.value;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  });
+};
 
 // Export States
 const showExportDialog = ref(false);
@@ -347,7 +469,22 @@ const canControl = computed(() => {
   return ['teacher', 'admin'].includes(userRole.value);
 });
 
+const shortcutActions = computed<ShortcutAction[]>(() => {
+  const actions: ShortcutAction[] = [
+    { label: '个人中心', path: '/profile' },
+    { label: '植物档案', path: '/plants' }
+  ];
+  if (canControl.value) {
+    actions.push({ label: '教学分析', path: '/analytics' });
+  }
+  if (userRole.value === 'admin') {
+    actions.push({ label: '用户管理', path: '/users' });
+  }
+  return actions;
+});
+
 const isStudent = computed(() => userRole.value === 'student');
+const useFloatingAI = true;
 
 const studentMissions = computed(() => {
   const soil = Number(latest.value.soil_moisture);
@@ -496,16 +633,89 @@ const hasValueChanged = (prev: Telemetry | undefined, next: Telemetry, key: Metr
   return Math.abs(Number(prevValue) - Number(nextValue)) >= epsilon;
 };
 
-const fetchData = async () => {
+const pushAIMessage = (role: AIRole, content: string, status: AIMessageStatus): number => {
+  const id = Date.now() + Math.floor(Math.random() * 1000);
+  aiMessages.value.push({ id, role, content, status });
+  scrollAIToBottom();
+  return id;
+};
+
+const updateAIMessage = (id: number, updater: (message: AIChatMessage) => void) => {
+  const target = aiMessages.value.find((item) => item.id === id);
+  if (!target) return;
+  updater(target);
+  scrollAIToBottom();
+};
+
+const clearAIChat = () => {
+  aiMessages.value = [];
+  lastAskedQuestion.value = '';
+};
+
+const copyAIMessage = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success('已复制到剪贴板');
+  } catch {
+    ElMessage.warning('复制失败，请手动复制');
+  }
+};
+
+const regenerateLastAnswer = async () => {
+  if (!lastAskedQuestion.value || aiLoading.value) {
+    return;
+  }
+  await askAI(lastAskedQuestion.value, false);
+};
+
+const rotatePromptSet = () => {
+  promptSetIndex.value = (promptSetIndex.value + 1) % promptSets.length;
+};
+
+const applyCapabilityPrompt = (prompt: string) => {
+  aiQuestion.value = prompt;
+};
+
+const askRecommended = async (question: string) => {
+  if (aiLoading.value) return;
+  await askAI(question, true);
+};
+
+const buildLocalScienceFallback = (question: string): string => {
+  const row = latestReading.value;
+  if (!row) {
+    return `你问的是：${question}。当前暂无实时数据，建议先采集一组温度、湿度、土壤湿度和光照数据，再进行诊断。`;
+  }
+
+  const hints: string[] = [];
+  if (row.soil_moisture < 20) hints.push('土壤湿度偏低，优先补水并复测 10 分钟后变化');
+  if (row.temp > 33) hints.push('温度偏高，建议先通风降温，观察叶片卷曲是否缓解');
+  if (row.light < 2500) hints.push('光照偏弱，可提升补光并记录 15 分钟后叶片状态');
+  if (row.humidity < 35) hints.push('空气湿度偏低，可适度喷雾并观察蒸腾变化');
+  if (hints.length === 0) hints.push('当前环境总体平稳，可继续按 5 分钟间隔记录趋势');
+
+  return `你问的是：${question}。基于当前数据（温度${row.temp.toFixed(1)}°C、湿度${row.humidity.toFixed(1)}%、土壤湿度${row.soil_moisture.toFixed(1)}%、光照${row.light.toFixed(0)}Lx），建议：${hints.join('；')}。`;
+};
+
+const fetchData = async (force = false) => {
   if (!selectedDeviceId.value) return;
-  dataLoading.value = true;
+  if (!force && wsConnected.value && history.value.length > 0) {
+    return;
+  }
+
+  const showLoading = force || history.value.length === 0;
+  if (showLoading) {
+    dataLoading.value = true;
+  }
   fetchErrorDetail.value = '';
   try {
     history.value = await getHistory(selectedDeviceId.value);
   } catch (error: any) {
-    fetchErrorDetail.value = error.response?.data?.detail || '实时数据加载失败，请稍后重试';
+    fetchErrorDetail.value = getErrorMessage(error, '实时数据加载失败，请稍后重试');
   } finally {
-    dataLoading.value = false;
+    if (showLoading) {
+      dataLoading.value = false;
+    }
   }
 };
 
@@ -532,7 +742,7 @@ const applyRealtimePayload = (payload: TelemetryRealtimePayload) => {
   lightActive.value = payload.actuators.light_state === 1;
 };
 
-const clearWs = () => {
+const clearWs = (resetAttempts = true) => {
   if (ws) {
     ws.onclose = null;
     ws.close();
@@ -543,43 +753,183 @@ const clearWs = () => {
     clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
   }
+  if (resetAttempts) {
+    wsReconnectAttempts = 0;
+  }
+};
+
+const scheduleWsReconnect = () => {
+  if (isPageUnmounted || !selectedDeviceId.value) {
+    return;
+  }
+
+  wsReconnectAttempts += 1;
+  const delay = Math.min(20000, 1000 * (2 ** Math.min(4, wsReconnectAttempts)));
+  wsReconnectTimer = setTimeout(() => {
+    connectRealtime();
+  }, delay);
 };
 
 const connectRealtime = () => {
-  if (!selectedDeviceId.value) return;
-  clearWs();
+  if (!selectedDeviceId.value || isPageUnmounted) return;
+  clearWs(false);
   ws = createTelemetrySocket(
     selectedDeviceId.value,
     (payload) => {
       wsConnected.value = true;
+      wsReconnectAttempts = 0;
       applyRealtimePayload(payload);
     },
     () => {
       wsConnected.value = false;
-      wsReconnectTimer = setTimeout(connectRealtime, 2000);
+      scheduleWsReconnect();
     }
   );
   ws.onopen = () => {
     wsConnected.value = true;
+    wsReconnectAttempts = 0;
   };
 };
 
-const askAI = async () => {
-  if (!aiQuestion.value.trim()) {
+const askAI = async (questionOverride?: string, appendUserMessage = true) => {
+  const question = (questionOverride ?? aiQuestion.value).trim();
+  if (!question) {
     ElMessage.warning('请先输入问题');
     return;
   }
+
+  if (appendUserMessage) {
+    pushAIMessage('user', question, 'done');
+  }
+  lastAskedQuestion.value = question;
+  if (!questionOverride) {
+    aiQuestion.value = '';
+  }
+
+  const assistantMessageId = pushAIMessage('assistant', '', 'streaming');
+
   aiLoading.value = true;
+
+  if (aiAbortController) {
+    aiAbortController.abort();
+  }
+  const currentController = new AbortController();
+  aiAbortController = currentController;
+  let streamedAnyToken = false;
+
   try {
-    const res = await askScienceAssistant({
-      question: aiQuestion.value.trim(),
-      device_id: selectedDeviceId.value || undefined
-    });
-    aiAnswer.value = res.answer;
+    await streamScienceAssistant(
+      {
+        question,
+        device_id: selectedDeviceId.value || undefined
+      },
+      (text) => {
+        streamedAnyToken = true;
+        updateAIMessage(assistantMessageId, (message) => {
+          message.content += text;
+          message.status = 'streaming';
+        });
+      },
+      (meta) => {
+        if (meta?.source) {
+          updateAIMessage(assistantMessageId, (message) => {
+            message.source = meta.source;
+          });
+        }
+      },
+      { signal: currentController.signal }
+    );
+
+    if (!streamedAnyToken) {
+      const res = await askScienceAssistant({
+        question,
+        device_id: selectedDeviceId.value || undefined
+      });
+      updateAIMessage(assistantMessageId, (message) => {
+        message.content = res.answer;
+        message.source = res.source;
+        message.status = 'done';
+      });
+    } else {
+      updateAIMessage(assistantMessageId, (message) => {
+        message.status = 'done';
+      });
+    }
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || 'AI 助手暂时不可用');
+    if (error?.name === 'AbortError') {
+      updateAIMessage(assistantMessageId, (message) => {
+        if (!message.content) {
+          message.content = '已停止生成';
+        }
+        message.status = 'done';
+      });
+      return;
+    }
+
+    const status = Number(error?.status || error?.response?.status || 0);
+    if (status === 401 || status === 403) {
+      updateAIMessage(assistantMessageId, (message) => {
+        message.content = '登录状态已失效，请重新登录。';
+        message.status = 'error';
+      });
+      ElMessage.error(getErrorMessage(error, '登录状态已失效，请重新登录'));
+      clearAuthSession();
+      router.push('/login');
+      return;
+    }
+
+    if (streamedAnyToken) {
+      updateAIMessage(assistantMessageId, (message) => {
+        message.status = 'done';
+      });
+      ElMessage.warning('连接中断，已保留已生成内容');
+      return;
+    }
+
+    try {
+      const res = await askScienceAssistant({
+        question,
+        device_id: selectedDeviceId.value || undefined
+      });
+      updateAIMessage(assistantMessageId, (message) => {
+        message.content = res.answer;
+        message.source = res.source;
+        message.status = 'done';
+      });
+    } catch (fallbackError: any) {
+      const localFallback = buildLocalScienceFallback(question);
+      updateAIMessage(assistantMessageId, (message) => {
+        message.content = localFallback;
+        message.source = 'local-rule';
+        message.status = 'done';
+      });
+      ElMessage.warning(getErrorMessage(fallbackError, error?.message || '云端 AI 暂时不可用，已切换本地应急建议'));
+    }
   } finally {
+    if (aiAbortController === currentController) {
+      aiAbortController = null;
+    }
     aiLoading.value = false;
+  }
+};
+
+const applyQuickQuestion = (question: string) => {
+  aiQuestion.value = question;
+};
+
+const navigateTo = (path: string) => {
+  router.push(path);
+};
+
+const handleShortcutCommand = (path: string | number | object) => {
+  if (typeof path === 'string') {
+    navigateTo(path);
+  }
+};
+
+const stopAI = () => {
+  if (aiAbortController) {
+    aiAbortController.abort();
   }
 };
 
@@ -592,9 +942,9 @@ const runScenario = async (scenario: DemoScenario) => {
   try {
     const res = await triggerDemoScenario(selectedDeviceId.value, scenario);
     ElMessage.success(res.message || '场景切换成功');
-    await fetchData();
+    await fetchData(true);
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '场景切换失败');
+    ElMessage.error(getErrorMessage(error, '场景切换失败'));
   } finally {
     scenarioLoading.value = '';
   }
@@ -610,20 +960,21 @@ const fetchDevices = async () => {
       pumpActive.value = dev.pump_state === 1;
       fanActive.value = dev.fan_state === 1;
       lightActive.value = dev.light_state === 1;
-      fetchData();
+      fetchData(true);
       connectRealtime();
     } else {
       selectedDeviceId.value = null;
       clearWs();
     }
   } catch (error) {
+    fetchErrorDetail.value = getErrorMessage(error, '设备加载失败，请稍后重试');
     console.error("Failed to fetch devices", error);
   }
 };
 
 const handleDeviceChange = () => {
   history.value = [];
-  fetchData();
+  fetchData(true);
   // Update control states for new device
   const dev = devices.value.find(d => d.id === selectedDeviceId.value);
   if (dev) {
@@ -678,9 +1029,7 @@ const onLightChange = (val: string | number | boolean) => {
 };
 
 const handleLogout = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-  localStorage.removeItem('username');
+  clearAuthSession();
   clearWs();
   if (timer) clearInterval(timer);
   router.push('/login');
@@ -727,7 +1076,7 @@ const handleExport = async () => {
   } catch (error: any) {
     console.error('Export error:', error);
     // 从后端响应中获取详细错误信息
-    const detail = error.response?.data?.detail;
+    const detail = getErrorMessage(error, '导出失败，请重试');
     if (error.response?.status === 404) {
       ElMessage.error(detail || '所选日期范围内没有数据');
     } else if (error.response?.status === 400) {
@@ -743,11 +1092,19 @@ const handleExport = async () => {
 };
 
 onMounted(async () => {
+  isPageUnmounted = false;
   await fetchDevices();
-  timer = setInterval(fetchData, 5000);
+  timer = setInterval(() => {
+    void fetchData();
+  }, 5000);
 });
 
 onUnmounted(() => {
+  isPageUnmounted = true;
+  if (aiAbortController) {
+    aiAbortController.abort();
+    aiAbortController = null;
+  }
   if (timer) clearInterval(timer);
   clearWs();
   (Object.keys(pulseTimers) as MetricKey[]).forEach((key) => {
@@ -759,8 +1116,8 @@ onUnmounted(() => {
 
 <style scoped>
 .dashboard-container {
-  padding: 22px;
-  max-width: 1280px;
+  padding: var(--layout-gutter);
+  max-width: var(--layout-max-width);
   margin: 0 auto;
 }
 
@@ -768,9 +1125,9 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 18px;
+  margin-bottom: var(--space-4);
   border-radius: 16px;
-  padding: 14px;
+  padding: var(--space-3);
 }
 
 .header-left {
@@ -786,16 +1143,32 @@ onUnmounted(() => {
 .header-right {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-end;
+  align-items: center;
+}
+
+.primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .device-select {
-  width: 210px;
+  width: 220px;
 }
 
 .action-btn {
-  border-radius: 10px;
+  border-radius: 999px;
+  padding-inline: 14px;
+}
+
+.action-btn--logout {
+  margin-left: 4px;
+}
+
+.more-menu {
+  display: inline-flex;
 }
 
 .mb-4 {
@@ -809,24 +1182,217 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
-.ai-input-row {
+.ai-toolbar-row {
   display: flex;
-  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.ai-floating-mode-hint {
+  border: 1px dashed #bcdcc9;
+}
+
+.ai-hint-panel {
+  color: #4b6b5a;
+  line-height: 1.7;
+  font-size: 13px;
+}
+
+.ai-reco-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  color: #4b5d53;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ai-reco-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ai-reco-card {
+  border: 1px solid #dbeadd;
+  border-radius: 10px;
+  background: #f8fcf9;
+  padding: 8px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.ai-reco-card:hover {
+  border-color: #7ac497;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(86, 145, 112, 0.12);
+}
+
+.ai-reco-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.ai-reco-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #2f5a44;
+}
+
+.ai-reco-desc {
+  font-size: 12px;
+  color: #6c8678;
+  line-height: 1.4;
+}
+
+.ai-capability-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 10px;
 }
 
-.ai-answer {
-  border-radius: 8px;
-  background: #f0f9eb;
-  border: 1px solid #e1f3d8;
-  color: #2c3e50;
-  padding: 10px 12px;
+.ai-capability-tag {
+  cursor: pointer;
+}
+
+.ai-capability-tag:hover {
+  border-color: #5cae7b;
+  color: #2f7d4f;
+}
+
+.ai-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.ai-chat-window {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--glass-bg);
+  margin-bottom: 10px;
+}
+
+.ai-empty-state {
+  color: var(--text-tertiary);
+  font-size: 13px;
   line-height: 1.6;
 }
 
+.ai-message {
+  margin-bottom: 10px;
+}
+
+.ai-message:last-child {
+  margin-bottom: 0;
+}
+
+.ai-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.ai-message.is-user .ai-msg-meta {
+  justify-content: flex-end;
+}
+
+.ai-message.is-assistant .ai-msg-meta {
+  justify-content: flex-start;
+}
+
+.ai-msg-bubble {
+  border-radius: 10px;
+  padding: 9px 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-message.is-user .ai-msg-bubble {
+  background: color-mix(in srgb, var(--el-color-primary) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--el-color-primary) 28%, transparent);
+  margin-left: 28px;
+}
+
+.ai-message.is-assistant .ai-msg-bubble {
+  background: var(--bg-card);
+  border: 1px solid var(--el-border-color-light);
+  margin-right: 28px;
+}
+
+.ai-msg-bubble.is-error {
+  background: color-mix(in srgb, var(--el-color-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--el-color-danger) 28%, transparent);
+}
+
+.ai-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ai-followup-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ai-followup-label {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.ai-followup-tag {
+  cursor: pointer;
+}
+
+.ai-quick-tag {
+  cursor: pointer;
+  user-select: none;
+}
+
+.ai-quick-tag:hover {
+  border-color: var(--el-color-success);
+  color: var(--el-color-success);
+}
+
+.typing-cursor {
+  margin-left: 2px;
+  animation: blink 1s step-start infinite;
+  color: var(--el-color-success);
+}
+
+.ai-generating {
+  color: var(--el-color-primary);
+}
+
 .ai-hint {
-  color: #909399;
+  color: var(--text-tertiary);
   font-size: 13px;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 .mission-item {
@@ -834,7 +1400,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px dashed #ebeef5;
+  border-bottom: 1px dashed var(--el-border-color-light);
 }
 
 .mission-item:last-child {
@@ -843,23 +1409,23 @@ onUnmounted(() => {
 
 .mission-title {
   font-weight: 600;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .mission-desc {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
   margin-top: 2px;
 }
 
 .teacher-tip {
   padding: 8px 0;
-  color: #5c6b77;
+  color: var(--text-secondary);
   line-height: 1.6;
 }
 
 .demo-scene-card {
-  border: 1px solid #fde2e2;
+  border: 1px solid color-mix(in srgb, var(--el-color-danger) 26%, transparent);
 }
 
 .cards-grid {
@@ -913,7 +1479,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   font-weight: 700;
-  color: #4a6156;
+  color: var(--text-secondary);
 }
 
 .sensor-value-wrap {
@@ -932,12 +1498,12 @@ onUnmounted(() => {
   font-size: 36px;
   line-height: 1;
   font-weight: 800;
-  color: #1f3327;
+  color: var(--text-main);
 }
 
 .sensor-unit {
   font-size: 14px;
-  color: #688073;
+  color: var(--text-tertiary);
 }
 
 .icon {
@@ -945,10 +1511,10 @@ onUnmounted(() => {
   height: 24px;
 }
 
-.temp-icon { color: #f56c6c; }
-.humidity-icon { color: #409eff; }
-.soil-icon { color: #67c23a; }
-.light-icon { color: #e6a23c; }
+.temp-icon { color: var(--el-color-danger); }
+.humidity-icon { color: var(--el-color-primary); }
+.soil-icon { color: var(--el-color-success); }
+.light-icon { color: var(--el-color-warning); }
 
 .demo-btns {
   display: flex;
@@ -1007,11 +1573,27 @@ onUnmounted(() => {
     justify-content: flex-start;
   }
 
-  .header-right .action-btn {
+  .header-right .action-btn,
+  .primary-actions {
     flex: 1 1 auto;
-    min-width: calc(50% - 8px);
+    min-width: calc(50% - 6px);
+  }
+
+  .header-right .action-btn {
     padding: 8px 12px;
     font-size: 13px;
+  }
+
+  .primary-actions {
+    width: 100%;
+  }
+
+  .more-menu {
+    width: calc(50% - 6px);
+  }
+
+  .more-menu :deep(.el-button) {
+    width: 100%;
   }
 
   .device-select {
@@ -1041,7 +1623,7 @@ onUnmounted(() => {
     flex-direction: row;
     justify-content: space-between;
     padding: 12px;
-    background: #f5f7fa;
+    background: var(--el-fill-color-light);
     border-radius: 8px;
   }
 
@@ -1051,6 +1633,10 @@ onUnmounted(() => {
 
   .ai-input-row {
     flex-direction: column;
+  }
+
+  .ai-reco-grid {
+    grid-template-columns: 1fr;
   }
 
   .demo-btns .el-button {
@@ -1067,7 +1653,8 @@ onUnmounted(() => {
     font-size: 24px;
   }
 
-  .header-right .action-btn {
+  .header-right .action-btn,
+  .more-menu {
     width: 100%;
   }
 }

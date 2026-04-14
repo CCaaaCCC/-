@@ -1,4 +1,5 @@
 import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -51,11 +52,17 @@ class TeachingContentUpdate(BaseModel):
 class TeachingContentResponse(TeachingContentBase):
     id: int
     author_id: int
+    author_name: str | None = None
+    author_username: str | None = None
+    publisher_name: str | None = None
     view_count: int
     is_published: bool
     published_at: datetime.datetime | None
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    can_edit: bool = False
+    can_delete: bool = False
+    can_publish: bool = False
     category: ContentCategoryResponse | None = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -133,6 +140,19 @@ class ContentCommentLikeResponse(BaseModel):
     comment_id: int
     liked: bool
     like_count: int
+
+
+class ContentAIPolishRequest(BaseModel):
+    bullet_points: str = Field(..., min_length=3)
+    mode: Literal["conservative", "expanded", "article"] = "conservative"
+    tone: str | None = None
+    target_length: str | None = None
+
+
+class ContentAIPolishResponse(BaseModel):
+    title_suggestion: str
+    organized_content: str
+    source: str
 
 
 ContentCommentResponse.model_rebuild()

@@ -8,11 +8,13 @@ export {
   submitAssignment,
   submitAssignmentWithFile,
   gradeAssignment,
+  getAssignmentAIFeedback,
   downloadSubmissionReport,
 } from './index';
 
 export type {
   Assignment,
+  AssignmentAIFeedback,
   AssignmentSubmission,
 } from './index';
 

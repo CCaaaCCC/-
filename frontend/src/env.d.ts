@@ -5,3 +5,8 @@ declare module '*.vue' {
   const component: DefineComponent<{}, {}, any>
   export default component
 }
+
+declare module 'katex/contrib/auto-render' {
+  const renderMathInElement: (element: HTMLElement, options?: Record<string, unknown>) => void;
+  export default renderMathInElement;
+}

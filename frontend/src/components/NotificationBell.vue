@@ -55,6 +55,7 @@ import {
   markNotificationRead,
   type NotificationItem,
 } from '../api';
+import { getErrorMessage } from '../utils/error';
 
 const router = useRouter();
 const unreadCount = ref(0);
@@ -77,7 +78,7 @@ const loadNotifications = async () => {
     notifications.value = data.items || [];
     await loadUnreadCount();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载通知失败');
+    ElMessage.error(getErrorMessage(error, '加载通知失败'));
   }
 };
 
@@ -88,7 +89,7 @@ const readAll = async () => {
     unreadCount.value = 0;
     ElMessage.success('已全部标记为已读');
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '操作失败');
+    ElMessage.error(getErrorMessage(error, '操作失败'));
   }
 };
 
@@ -107,7 +108,7 @@ const openNotification = async (item: NotificationItem) => {
       router.push('/teaching');
     }
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '打开通知失败');
+    ElMessage.error(getErrorMessage(error, '打开通知失败'));
   }
 };
 
@@ -150,20 +151,21 @@ onUnmounted(() => {
 }
 
 .notice-item {
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   padding: 10px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  background: var(--bg-card);
+  transition: background-color 0.2s, border-color 0.2s;
 }
 
 .notice-item:hover {
-  background-color: #f5f7fa;
+  background-color: var(--el-fill-color-light);
 }
 
 .notice-item.unread {
-  border-color: #f56c6c;
-  background: #fff8f8;
+  border-color: var(--color-danger);
+  background: rgba(226, 100, 95, 0.08);
 }
 
 .notice-title-row {
@@ -175,18 +177,18 @@ onUnmounted(() => {
 
 .notice-title {
   font-size: 14px;
-  color: #303133;
+  color: var(--text-main);
   font-weight: 600;
 }
 
 .notice-content {
-  color: #606266;
+  color: var(--text-secondary);
   font-size: 13px;
   margin-bottom: 4px;
 }
 
 .notice-time {
-  color: #909399;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 </style>

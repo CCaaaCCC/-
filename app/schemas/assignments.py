@@ -1,4 +1,5 @@
 import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -37,6 +38,8 @@ class AssignmentResponse(AssignmentBase):
     teacher_name: str | None = None
     device_name: str | None = None
     class_name: str | None = None
+    can_manage: bool = False
+    can_grade: bool = False
     created_at: datetime.datetime | None = None
     submission_count: int = 0
 
@@ -109,3 +112,16 @@ class AssignmentSubmissionResponse(AssignmentSubmissionBase):
     updated_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AssignmentAIFeedbackRequest(BaseModel):
+    submission_id: int
+
+
+class AssignmentAIFeedbackResponse(BaseModel):
+    score_band: str
+    strengths: list[str]
+    improvements: list[str]
+    teacher_comment_draft: str
+    source: str
+    debug_context: dict[str, Any] | None = None

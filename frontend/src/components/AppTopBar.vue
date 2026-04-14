@@ -1,86 +1,53 @@
 <template>
-  <div class="header app-glass-card">
-    <div class="header-left">
+  <div class="page-title-banner">
+    <div class="title-block">
       <h2 class="app-page-title">{{ title }}</h2>
-      <el-tag :type="roleTagType">{{ roleText }}</el-tag>
+      <p v-if="subtitle" class="subtitle">{{ subtitle }}</p>
     </div>
-    <div class="header-right">
-      <el-button class="topbar-btn" @click="router.push('/')">🏠 返回工作台</el-button>
-      <NotificationBell />
-      <el-button class="topbar-btn" @click="router.push('/profile')">👤 个人中心</el-button>
-      <slot name="extra-actions" />
-      <el-button type="danger" plain class="topbar-btn" @click="handleLogout">退出登录</el-button>
-    </div>
+    <el-tag :type="roleTagType" effect="plain" class="role-tag">{{ roleText }}</el-tag>
+    <slot name="extra-actions" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router';
-import NotificationBell from './NotificationBell.vue';
-
 defineProps<{
   title: string;
   roleTagType: string;
   roleText: string;
+  subtitle?: string;
 }>();
-
-const router = useRouter();
-
-const handleLogout = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-  localStorage.removeItem('username');
-  router.push('/login');
-};
 </script>
 
 <style scoped>
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 20px;
-  border-radius: 14px;
-  margin-bottom: 16px;
-}
-
-.header-left {
+.page-title-banner {
   display: flex;
   align-items: center;
-  gap: 16px;
-}
-
-.header-left h2 {
-  margin: 0;
-  font-size: 20px;
-  color: var(--text-main);
-}
-
-.header-right {
-  display: flex;
-  flex-wrap: wrap;
   gap: 12px;
-  align-items: center;
+  margin-bottom: 24px;
 }
 
-.topbar-btn {
-  border-radius: 10px;
+.title-block {
+  display: flex;
+  flex-direction: column;
 }
 
-@media (max-width: 900px) {
-  .header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+.app-page-title {
+  margin: 0;
+  font-size: var(--font-size-h2);
+  background: linear-gradient(120deg, var(--text-main), var(--color-plant-700));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 800;
+}
 
-  .header-right {
-    width: 100%;
-  }
+.subtitle {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-body);
+  margin-top: 4px;
+}
 
-  .topbar-btn {
-    flex: 1 1 160px;
-  }
+.role-tag {
+  align-self: center;
+  border-radius: 8px;
 }
 </style>
-

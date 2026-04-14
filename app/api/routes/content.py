@@ -1,9 +1,10 @@
 import datetime
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import desc, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.dependencies import get_admin_user, get_content_editor, get_current_user, get_db, get_teacher_user
 from app.db.models import (
@@ -15,6 +16,8 @@ from app.db.models import (
     User,
 )
 from app.schemas.content import (
+    ContentAIPolishRequest,
+    ContentAIPolishResponse,
     ContentCategoryCreate,
     ContentCategoryResponse,
     ContentCategoryWithChildren,
@@ -30,7 +33,10 @@ from app.schemas.content import (
     TeachingContentResponse,
     TeachingContentUpdate,
 )
+from app.services.ai_science_service import polish_teaching_content
+from app.services.ai_audit_service import infer_fallback_reason, record_ai_audit
 from app.services.notification_service import create_notification
+from app.services.rag_service import rebuild_published_content_index, sync_teaching_content_index
 
 
 router = APIRouter(tags=["content"])
@@ -42,12 +48,95 @@ def _display_name(user: User | None) -> str | None:
     return user.real_name or user.username
 
 
+def _content_permissions(content: TeachingContent, current_user: User) -> dict[str, bool]:
+    can_manage = current_user.role == "admin" or content.author_id == current_user.id
+    return {
+        "can_edit": can_manage,
+        "can_delete": can_manage,
+        "can_publish": can_manage,
+    }
+
+
+def _serialize_teaching_content(
+    content: TeachingContent,
+    current_user: User,
+    *,
+    include_category: bool = False,
+) -> dict[str, object]:
+    category = getattr(content, "category", None)
+    author = getattr(content, "author", None)
+    author_name = _display_name(author)
+
+    payload: dict[str, object] = {
+        "id": content.id,
+        "title": content.title,
+        "category_id": content.category_id,
+        "category_name": getattr(category, "name", None),
+        "content_type": content.content_type,
+        "content": content.content,
+        "video_url": content.video_url,
+        "file_path": content.file_path,
+        "cover_image": content.cover_image,
+        "author_id": content.author_id,
+        "author_name": author_name,
+        "author_username": getattr(author, "username", None),
+        "publisher_name": author_name,
+        "view_count": content.view_count,
+        "is_published": content.is_published,
+        "published_at": content.published_at,
+        "created_at": content.created_at,
+        "updated_at": content.updated_at,
+        **_content_permissions(content, current_user),
+    }
+
+    if include_category:
+        if category:
+            payload["category"] = {
+                "id": category.id,
+                "name": category.name,
+                "description": category.description,
+                "parent_id": category.parent_id,
+                "sort_order": category.sort_order,
+                "created_at": category.created_at,
+            }
+        else:
+            payload["category"] = None
+
+    return payload
+
+
 def _ensure_content_interaction_allowed(content: TeachingContent | None, current_user: User) -> None:
     if not content:
         raise HTTPException(status_code=404, detail="内容不存在")
 
     if not content.is_published and current_user.role not in ["teacher", "admin"]:
         raise HTTPException(status_code=403, detail="无权互动未发布内容")
+
+
+def _build_comment_response(
+    comment: ContentComment,
+    *,
+    student: User | None = None,
+    like_count: int | None = None,
+    liked: bool = False,
+    replies: list[ContentCommentResponse] | None = None,
+) -> ContentCommentResponse:
+    owner = student or comment.student
+    return ContentCommentResponse(
+        id=comment.id,
+        content_id=comment.content_id,
+        student_id=comment.student_id,
+        student_name=_display_name(owner),
+        student_avatar_url=owner.avatar_url if owner else None,
+        parent_id=comment.parent_id,
+        comment=comment.comment,
+        like_count=int(comment.like_count or 0) if like_count is None else like_count,
+        liked=liked,
+        teacher_reply=comment.teacher_reply,
+        reply_at=comment.reply_at,
+        created_at=comment.created_at,
+        replies=replies or [],
+    )
 
 
 def _serialize_comment_rows(
@@ -80,23 +169,15 @@ def _serialize_comment_rows(
         )
     }
 
-    serialized: dict[int, ContentCommentResponse] = {}
-    for row in comments:
-        serialized[row.id] = ContentCommentResponse(
-            id=row.id,
-            content_id=row.content_id,
-            student_id=row.student_id,
-            student_name=_display_name(row.student),
-            student_avatar_url=row.student.avatar_url if row.student else None,
-            parent_id=row.parent_id,
-            comment=row.comment,
+    serialized: dict[int, ContentCommentResponse] = {
+        row.id: _build_comment_response(
+            row,
             like_count=like_counts.get(row.id, 0),
             liked=row.id in liked_ids,
-            teacher_reply=row.teacher_reply,
-            reply_at=row.reply_at,
-            created_at=row.created_at,
             replies=[],
         )
+        for row in comments
+    }
 
     roots: list[ContentCommentResponse] = []
     for row in comments:
@@ -228,7 +309,7 @@ async def delete_category(
 async def get_contents(
     category_id: Optional[int] = None,
     content_type: Optional[str] = None,
-    is_published: Optional[bool] = True,
+    is_published: Optional[bool] = None,
     search: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
@@ -236,7 +317,10 @@ async def get_contents(
     current_user: User = Depends(get_current_user),
 ):
     """获取内容列表（支持筛选和搜索/分页）"""
-    query = db.query(TeachingContent)
+    query = db.query(TeachingContent).options(
+        joinedload(TeachingContent.category),
+        joinedload(TeachingContent.author),
+    )
 
     if current_user.role not in ["teacher", "admin"]:
         is_published = True
@@ -263,28 +347,7 @@ async def get_contents(
         .all()
     )
 
-    result = []
-    for content in contents:
-        category_name = getattr(getattr(content, "category", None), "name", None)
-        result.append(
-            {
-                "id": content.id,
-                "title": content.title,
-                "category_id": content.category_id,
-                "category_name": category_name,
-                "content_type": content.content_type,
-                "content": content.content,
-                "video_url": content.video_url,
-                "file_path": content.file_path,
-                "cover_image": content.cover_image,
-                "author_id": content.author_id,
-                "view_count": content.view_count,
-                "is_published": content.is_published,
-                "published_at": content.published_at,
-                "created_at": content.created_at,
-                "updated_at": content.updated_at,
-            }
-        )
+    result = [_serialize_teaching_content(content, current_user) for content in contents]
 
     return {"items": result, "total": total, "page": page, "page_size": page_size}
 
@@ -296,7 +359,12 @@ async def get_content(
     current_user: User = Depends(get_current_user),
 ):
     """获取内容详情"""
-    content = db.query(TeachingContent).filter(TeachingContent.id == content_id).first()
+    content = (
+        db.query(TeachingContent)
+        .options(joinedload(TeachingContent.category), joinedload(TeachingContent.author))
+        .filter(TeachingContent.id == content_id)
+        .first()
+    )
     if not content:
         raise HTTPException(status_code=404, detail="内容不存在")
 
@@ -307,12 +375,13 @@ async def get_content(
     db.commit()
     db.refresh(content)
 
-    return content
+    return _serialize_teaching_content(content, current_user, include_category=True)
 
 
 @router.post("/api/content/contents", response_model=TeachingContentResponse)
 async def create_content(
     content: TeachingContentCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_content_editor),
     db: Session = Depends(get_db),
 ):
@@ -324,13 +393,16 @@ async def create_content(
     db.add(db_content)
     db.commit()
     db.refresh(db_content)
-    return db_content
+
+    background_tasks.add_task(sync_teaching_content_index, db_content.id)
+    return _serialize_teaching_content(db_content, current_user, include_category=True)
 
 
 @router.put("/api/content/contents/{content_id}", response_model=TeachingContentResponse)
 async def update_content(
     content_id: int,
     content_update: TeachingContentUpdate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_content_editor),
     db: Session = Depends(get_db),
 ):
@@ -342,21 +414,27 @@ async def update_content(
     if current_user.role != "admin" and db_content.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="只能编辑自己创建的内容")
 
+    was_published = bool(db_content.is_published)
     update_data = content_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_content, key, value)
 
-    if update_data.get("is_published") and not db_content.is_published:
+    if update_data.get("is_published") and not was_published:
         db_content.published_at = datetime.datetime.utcnow()
+    if update_data.get("is_published") is False:
+        db_content.published_at = None
 
     db.commit()
     db.refresh(db_content)
-    return db_content
+
+    background_tasks.add_task(sync_teaching_content_index, db_content.id)
+    return _serialize_teaching_content(db_content, current_user, include_category=True)
 
 
 @router.delete("/api/content/contents/{content_id}")
 async def delete_content(
     content_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_content_editor),
     db: Session = Depends(get_db),
 ):
@@ -368,14 +446,58 @@ async def delete_content(
     if current_user.role != "admin" and db_content.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="只能删除自己创建的内容")
 
+    deleted_content_id = db_content.id
     db.delete(db_content)
     db.commit()
+
+    background_tasks.add_task(sync_teaching_content_index, deleted_content_id)
     return {"message": "内容已删除"}
+
+
+@router.post("/api/content/ai/polish", response_model=ContentAIPolishResponse)
+async def ai_polish_content(
+    request: ContentAIPolishRequest,
+    current_user: User = Depends(get_content_editor),
+):
+    start_ts = time.perf_counter()
+    result, source = await polish_teaching_content(
+        bullet_points=request.bullet_points,
+        mode=request.mode,
+        tone=request.tone,
+        target_length=request.target_length,
+    )
+
+    latency_ms = int((time.perf_counter() - start_ts) * 1000)
+    record_ai_audit(
+        operator_id=current_user.id,
+        operation_type="ai_polish",
+        source=source,
+        latency_ms=latency_ms,
+        prompt_text=request.bullet_points,
+        output_text=result.get("organized_content", ""),
+        fallback_reason=infer_fallback_reason(source),
+        extra={"mode": request.mode, "tone": request.tone, "target_length": request.target_length},
+    )
+
+    return ContentAIPolishResponse(
+        title_suggestion=result.get("title_suggestion", "科学探究小课堂"),
+        organized_content=result.get("organized_content", ""),
+        source=source,
+    )
+
+
+@router.post("/api/content/ai/reindex")
+async def rebuild_ai_content_index(
+    current_user: User = Depends(get_admin_user),
+):
+    count = rebuild_published_content_index()
+    return {"message": "重建完成", "indexed_contents": count}
 
 
 @router.post("/api/content/contents/{content_id}/publish")
 async def publish_content(
     content_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_content_editor),
     db: Session = Depends(get_db),
 ):
@@ -394,6 +516,7 @@ async def publish_content(
         db_content.published_at = None
 
     db.commit()
+    background_tasks.add_task(sync_teaching_content_index, db_content.id)
     return {"message": f"内容已{'发布' if db_content.is_published else '取消发布'}"}
 
 
@@ -592,19 +715,11 @@ async def add_comment(
     db.commit()
     db.refresh(db_comment)
 
-    return ContentCommentResponse(
-        id=db_comment.id,
-        content_id=db_comment.content_id,
-        student_id=db_comment.student_id,
-        student_name=_display_name(current_user),
-        student_avatar_url=current_user.avatar_url,
-        parent_id=db_comment.parent_id,
-        comment=db_comment.comment,
+    return _build_comment_response(
+        db_comment,
+        student=current_user,
         like_count=0,
         liked=False,
-        teacher_reply=db_comment.teacher_reply,
-        reply_at=db_comment.reply_at,
-        created_at=db_comment.created_at,
         replies=[],
     )
 
@@ -652,19 +767,11 @@ async def reply_to_comment(
     db.commit()
     db.refresh(db_comment)
 
-    return ContentCommentResponse(
-        id=db_comment.id,
-        content_id=db_comment.content_id,
-        student_id=db_comment.student_id,
-        student_name=_display_name(current_user),
-        student_avatar_url=current_user.avatar_url,
-        parent_id=db_comment.parent_id,
-        comment=db_comment.comment,
+    return _build_comment_response(
+        db_comment,
+        student=current_user,
         like_count=0,
         liked=False,
-        teacher_reply=db_comment.teacher_reply,
-        reply_at=db_comment.reply_at,
-        created_at=db_comment.created_at,
         replies=[],
     )
 
@@ -741,16 +848,7 @@ async def reply_comment(
     db.commit()
     db.refresh(db_comment)
 
-    return ContentCommentResponse(
-        id=db_comment.id,
-        content_id=db_comment.content_id,
-        student_id=db_comment.student_id,
-        student_name=db_comment.student.username if db_comment.student else None,
-        comment=db_comment.comment,
-        teacher_reply=db_comment.teacher_reply,
-        reply_at=db_comment.reply_at,
-        created_at=db_comment.created_at,
-    )
+    return _build_comment_response(db_comment, replies=[])
 
 
 # ---------------- 学习统计（教师端） ----------------
@@ -778,11 +876,16 @@ async def get_learning_stats(
 
     completion_rate = (completed / total_contents * 100) if total_contents > 0 else 0
     avg_progress_result = (
-        db.query((db.func.sum(StudentLearningRecord.progress_percent) / db.func.count(StudentLearningRecord)).label("avg"))
+        db.query(
+            (
+                func.sum(StudentLearningRecord.progress_percent)
+                / func.count(StudentLearningRecord.id)
+            ).label("avg")
+        )
         .filter(StudentLearningRecord.progress_percent > 0)
         .first()
     )
-    average_progress = avg_progress_result.avg if avg_progress_result and avg_progress_result.avg else 0
+    average_progress = float(avg_progress_result.avg) if avg_progress_result and avg_progress_result.avg is not None else 0
 
     return LearningStats(
         total_students=total_students,

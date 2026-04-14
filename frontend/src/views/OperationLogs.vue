@@ -31,6 +31,10 @@
               <el-option label="批量修改班级" value="batch_update_class" />
               <el-option label="批量重置密码" value="batch_reset_password" />
               <el-option label="导入用户" value="import_users" />
+              <el-option label="AI 科学问答" value="ai_science" />
+              <el-option label="AI 流式问答" value="ai_stream" />
+              <el-option label="AI 作业点评" value="ai_feedback" />
+              <el-option label="AI 内容润色" value="ai_polish" />
             </el-select>
           </el-form-item>
           <el-form-item label="操作员">
@@ -134,22 +138,11 @@ import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { Download } from 'lucide-vue-next';
-import axios from 'axios';
+import { exportOperationLogs, getOperationLogs, getUsers } from '../api';
+import { getErrorMessage } from '../utils/error';
+import { clearAuthSession } from '../utils/authSession';
 
 const router = useRouter();
-
-const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
-  timeout: 10000
-});
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers['Authorization'] = `Bearer ${token}`;
-  }
-  return config;
-});
 
 // 状态
 const loading = ref(false);
@@ -209,15 +202,14 @@ const loadLogs = async () => {
       params.end_date = toLocalDateString(filterForm.value.date_range[1]);
     }
 
-    const response = await api.get('/logs/operations', { params });
-    const data = response.data || {};
+    const data = await getOperationLogs(params);
     if (!Array.isArray(data.items) || typeof data.total !== 'number') {
       throw new Error('日志接口返回结构异常');
     }
     logs.value = data.items;
     total.value = data.total;
   } catch (error: any) {
-    ElMessage.error('加载日志失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('加载日志失败：' + getErrorMessage(error, '请稍后重试'));
   } finally {
     loading.value = false;
   }
@@ -226,10 +218,10 @@ const loadLogs = async () => {
 // 加载操作员列表
 const loadOperators = async () => {
   try {
-    const response = await api.get('/users', { params: { role: 'admin', page: 1, page_size: 200 } });
-    operators.value = response.data.items || [];
-  } catch (error) {
-    console.error('加载操作员列表失败:', error);
+    const response = await getUsers({ role: 'admin', page: 1, page_size: 200 });
+    operators.value = response.items || [];
+  } catch (error: any) {
+    ElMessage.error('加载操作员列表失败：' + getErrorMessage(error, '请稍后重试'));
   }
 };
 
@@ -248,21 +240,22 @@ const resetFilter = () => {
 const exportLogs = async () => {
   exporting.value = true;
   try {
-    const response = await api.post('/logs/operations/export', {}, {
-      responseType: 'blob'
-    });
-    const blob = new Blob([response.data], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    });
+    const params: { start_date?: string; end_date?: string } = {};
+    if (filterForm.value.date_range) {
+      params.start_date = toLocalDateString(filterForm.value.date_range[0]);
+      params.end_date = toLocalDateString(filterForm.value.date_range[1]);
+    }
+
+    const { blob, filename } = await exportOperationLogs(params);
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `操作日志_${toLocalDateString(new Date())}.xlsx`;
+    link.download = filename || `操作日志_${toLocalDateString(new Date())}.xlsx`;
     link.click();
     window.URL.revokeObjectURL(url);
     ElMessage.success('导出成功');
   } catch (error: any) {
-    ElMessage.error('导出失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('导出失败：' + getErrorMessage(error, '请稍后重试'));
   } finally {
     exporting.value = false;
   }
@@ -279,7 +272,11 @@ const getOperationTypeName = (type: string) => {
     batch_delete: '批量删除',
     batch_update_class: '批量修改班级',
     batch_reset_password: '批量重置密码',
-    import_users: '导入用户'
+    import_users: '导入用户',
+    ai_science: 'AI 科学问答',
+    ai_stream: 'AI 流式问答',
+    ai_feedback: 'AI 作业点评',
+    ai_polish: 'AI 内容润色',
   };
   return map[type] || type;
 };
@@ -294,7 +291,11 @@ const getOperationTypeTag = (type: string) => {
     batch_delete: 'danger',
     batch_update_class: 'primary',
     batch_reset_password: 'warning',
-    import_users: 'success'
+    import_users: 'success',
+    ai_science: 'warning',
+    ai_stream: 'warning',
+    ai_feedback: 'primary',
+    ai_polish: 'success',
   };
   return map[type] || '';
 };
@@ -306,9 +307,7 @@ const formatDateTime = (dateStr: string) => {
 };
 
 const handleLogout = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-  localStorage.removeItem('username');
+  clearAuthSession();
   router.push('/login');
 };
 
@@ -321,7 +320,9 @@ onMounted(() => {
 <style scoped>
 .logs-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+  background:
+    radial-gradient(circle at 8% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
   padding: 20px;
 }
 
@@ -330,10 +331,11 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--glass-bg-strong);
   padding: 16px 24px;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--el-border-color-light);
+  box-shadow: var(--shadow-soft);
 }
 
 .header-left {
@@ -344,7 +346,7 @@ onMounted(() => {
 
 .header-left h2 {
   margin: 0;
-  color: #333;
+  color: var(--text-main);
 }
 
 .header-right {
@@ -353,12 +355,13 @@ onMounted(() => {
 }
 
 .main-container {
-  max-width: 1400px;
+  max-width: var(--layout-wide-max-width);
   margin: 0 auto;
 }
 
 .filter-card {
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--el-border-color-light);
 }
 
 .stats-row {
@@ -368,7 +371,8 @@ onMounted(() => {
 }
 
 .stat-card {
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--el-border-color-light);
 }
 
 .stat-item {
@@ -379,17 +383,18 @@ onMounted(() => {
 .stat-value {
   font-size: 36px;
   font-weight: bold;
-  color: #2c3e50;
+  color: var(--text-main);
 }
 
 .stat-label {
   font-size: 14px;
-  color: #666;
+  color: var(--text-tertiary);
   margin-top: 4px;
 }
 
 .table-card {
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--el-border-color-light);
 }
 
 .pagination-container {

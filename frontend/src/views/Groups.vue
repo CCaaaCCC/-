@@ -170,7 +170,7 @@
               </el-tag>
             </div>
           </div>
-          <div class="detail-actions" v-if="isTeacherOrAdmin">
+          <div class="detail-actions" v-if="canManageSelectedGroup">
             <el-button type="primary" @click="editGroup(selectedGroup)">编辑小组</el-button>
             <el-button type="danger" @click="confirmDeleteGroup(selectedGroup.id)">删除小组</el-button>
           </div>
@@ -180,7 +180,7 @@
         <div class="members-section">
           <div class="section-header">
             <h4>👥 小组成员 ({{ selectedGroup.members?.length || 0 }}人)</h4>
-            <el-button type="primary" size="small" @click="showAddMember = true" v-if="isTeacherOrAdmin">
+            <el-button type="primary" size="small" @click="showAddMember = true" v-if="canManageSelectedGroup">
               <el-icon><Plus /></el-icon> 添加成员
             </el-button>
           </div>
@@ -193,7 +193,7 @@
                   v-model="row.role"
                   size="small"
                   @change="updateMemberRole(row)"
-                  v-if="isTeacherOrAdmin"
+                  v-if="canManageSelectedGroup"
                 >
                   <el-option label="组长" value="leader" />
                   <el-option label="记录员" value="recorder" />
@@ -210,7 +210,7 @@
                 {{ formatDate(row.joined_at) }}
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="100" v-if="isTeacherOrAdmin">
+            <el-table-column label="操作" width="100" v-if="canManageSelectedGroup">
               <template #default="{ row }">
                 <el-button
                   type="danger"
@@ -269,6 +269,7 @@ import { Plus, Filter, User, Monitor, Picture } from 'lucide-vue-next';
 import StatusPanel from '../components/StatusPanel.vue';
 import { useCurrentUser } from '../composables/useCurrentUser';
 import AppTopBar from '../components/AppTopBar.vue';
+import { getErrorMessage } from '../utils/error';
 import {
   getGroups,
   getGroupDetail,
@@ -289,7 +290,7 @@ const router = useRouter();
 const { role: userRole, ensureLoaded } = useCurrentUser();
 const userRoleText = computed(() => {
   const map: Record<string, string> = { student: '学生', teacher: '教师', admin: '管理员' };
-  return map[userRole] || '未知';
+  return map[userRole.value] || '未知';
 });
 const roleTagType = computed(() => {
   const map: Record<string, string> = { student: '', teacher: 'warning', admin: 'danger' };
@@ -320,6 +321,7 @@ const showDetailDialog = ref(false);
 const showAddMember = ref(false);
 const editingGroup = ref<any>(null);
 const selectedGroup = ref<any>(null);
+const canManageSelectedGroup = computed(() => Boolean(selectedGroup.value?.can_manage));
 
 // 表单
 const groupForm = ref({
@@ -359,7 +361,7 @@ const loadGroups = async () => {
     groups.value = data;
   } catch (error: any) {
     const status = error.response?.status;
-    const detail = error.response?.data?.detail || error.message;
+    const detail = getErrorMessage(error, '加载失败');
     if (status === 401) {
       pageErrorDetail.value = '未登录或登录已过期，请重新登录。';
       pageErrorActionText.value = '去登录';
@@ -381,7 +383,7 @@ const loadClasses = async () => {
   try {
     classes.value = await getClasses();
   } catch (error: any) {
-    ElMessage.error('加载班级列表失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('加载班级列表失败：' + getErrorMessage(error, '请稍后重试'));
   }
 };
 
@@ -389,7 +391,7 @@ const loadDevices = async () => {
   try {
     devices.value = await getDevices();
   } catch (error: any) {
-    ElMessage.error('加载设备列表失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('加载设备列表失败：' + getErrorMessage(error, '请稍后重试'));
   }
 };
 
@@ -399,7 +401,7 @@ const loadAvailableStudents = async () => {
     const users = response.items || [];
     availableStudents.value = users.filter((u: any) => u.is_active);
   } catch (error: any) {
-    ElMessage.error('加载学生列表失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('加载学生列表失败：' + getErrorMessage(error, '请稍后重试'));
   }
 };
 
@@ -412,7 +414,7 @@ const viewGroup = async (group: any) => {
   try {
     selectedGroup.value = await getGroupDetail(group.id);
   } catch (error: any) {
-    ElMessage.error('加载小组详情失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('加载小组详情失败：' + getErrorMessage(error, '请稍后重试'));
   }
 };
 
@@ -437,7 +439,7 @@ const saveGroup = async () => {
     editingGroup.value = null;
     loadGroups();
   } catch (error: any) {
-    ElMessage.error('保存失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('保存失败：' + getErrorMessage(error, '请稍后重试'));
   } finally {
     saving.value = false;
   }
@@ -445,6 +447,10 @@ const saveGroup = async () => {
 
 // 编辑小组
 const editGroup = (group: any) => {
+  if (!group?.can_manage) {
+    ElMessage.warning('该小组为只读模式，仅创建者或管理员可编辑');
+    return;
+  }
   editingGroup.value = group;
   groupForm.value = {
     group_name: group.group_name,
@@ -458,6 +464,10 @@ const editGroup = (group: any) => {
 
 // 删除小组
 const confirmDeleteGroup = async (groupId: number) => {
+  if (!canManageSelectedGroup.value) {
+    ElMessage.warning('该小组为只读模式，仅创建者或管理员可删除');
+    return;
+  }
   try {
     await ElMessageBox.confirm('确定要删除这个小组吗？', '警告', {
       type: 'warning'
@@ -466,13 +476,19 @@ const confirmDeleteGroup = async (groupId: number) => {
     ElMessage.success('小组已删除');
     showDetailDialog.value = false;
     await loadGroups();
-  } catch (error) {
-    // 用户取消
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      ElMessage.error('删除失败：' + getErrorMessage(error, '请稍后重试'));
+    }
   }
 };
 
 // 添加成员
 const saveMember = async () => {
+  if (!canManageSelectedGroup.value) {
+    ElMessage.warning('该小组为只读模式，仅创建者或管理员可管理成员');
+    return;
+  }
   if (!memberForm.value.student_id || !selectedGroup.value) {
     ElMessage.warning('请选择学生和角色');
     return;
@@ -486,7 +502,7 @@ const saveMember = async () => {
     memberForm.value = { student_id: null, role: 'recorder' };
     viewGroup(selectedGroup.value);
   } catch (error: any) {
-    ElMessage.error('添加失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('添加失败：' + getErrorMessage(error, '请稍后重试'));
   } finally {
     saving.value = false;
   }
@@ -494,6 +510,10 @@ const saveMember = async () => {
 
 // 移除成员
 const removeMember = async (memberId: number) => {
+  if (!canManageSelectedGroup.value) {
+    ElMessage.warning('该小组为只读模式，仅创建者或管理员可管理成员');
+    return;
+  }
   try {
     await ElMessageBox.confirm('确定要移除这个成员吗？', '警告', {
       type: 'warning'
@@ -505,18 +525,22 @@ const removeMember = async (memberId: number) => {
     }
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error('移除失败：' + (error.response?.data?.detail || error.message));
+      ElMessage.error('移除失败：' + getErrorMessage(error, '请稍后重试'));
     }
   }
 };
 
 // 更新成员角色（待实现后端 API）
 const updateMemberRole = async (member: any) => {
+  if (!canManageSelectedGroup.value) {
+    ElMessage.warning('该小组为只读模式，仅创建者或管理员可管理成员');
+    return;
+  }
   try {
     await updateGroupMemberRole(member.id, member.role);
     ElMessage.success('成员角色更新成功');
   } catch (error: any) {
-    ElMessage.error('角色更新失败：' + (error.response?.data?.detail || error.message));
+    ElMessage.error('角色更新失败：' + getErrorMessage(error, '请稍后重试'));
   }
 };
 
@@ -568,58 +592,36 @@ onMounted(async () => {
 <style scoped>
 .groups-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 20px;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  background: rgba(255, 255, 255, 0.95);
-  padding: 16px 24px;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.header-left h2 {
-  margin: 0;
-  color: #333;
-}
-
-.header-right {
-  display: flex;
-  gap: 12px;
+  padding: var(--layout-gutter);
+  background:
+    radial-gradient(circle at 8% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
 }
 
 .main-container {
-  display: flex;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-5);
+  max-width: var(--layout-wide-max-width);
+  margin: 0 auto;
 }
 
 .sidebar {
-  width: 280px;
-  flex-shrink: 0;
+  width: 100%;
+  align-self: start;
 }
 
 .filter-card,
 .stats-card {
-  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--el-border-color-light);
 }
 
 .card-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: bold;
-  color: #333;
+  font-weight: 600;
+  color: var(--text-main);
 }
 
 .stat-item {
@@ -630,12 +632,12 @@ onMounted(async () => {
 .stat-value {
   font-size: 32px;
   font-weight: bold;
-  color: #667eea;
+  color: var(--el-color-primary);
 }
 
 .stat-label {
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
   margin-top: 4px;
 }
 
@@ -651,13 +653,14 @@ onMounted(async () => {
 }
 
 .group-card {
-  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--el-border-color-light);
   cursor: pointer;
-  transition: transform 0.2s;
+  transition: transform 0.2s, box-shadow var(--motion-base) var(--ease-standard);
 }
 
 .group-card:hover {
   transform: translateY(-4px);
+  box-shadow: var(--shadow-soft-hover);
 }
 
 .group-header {
@@ -670,11 +673,11 @@ onMounted(async () => {
 .group-name {
   margin: 0;
   font-size: 18px;
-  color: #333;
+  color: var(--text-main);
 }
 
 .group-description {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 14px;
   margin: 0 0 12px 0;
   display: -webkit-box;
@@ -686,7 +689,7 @@ onMounted(async () => {
 .group-meta {
   display: flex;
   gap: 16px;
-  color: #666;
+  color: var(--text-secondary);
   font-size: 13px;
   margin-bottom: 12px;
 }
@@ -702,7 +705,7 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 4px;
   padding-top: 8px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--el-border-color-light);
 }
 
 .group-detail {
@@ -714,19 +717,19 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: flex-start;
   padding: 16px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
   margin-bottom: 20px;
 }
 
 .detail-info h3 {
   margin: 0 0 8px 0;
-  color: #333;
+  color: var(--text-main);
 }
 
 .detail-info p {
   margin: 0 0 12px 0;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .detail-meta {
@@ -752,13 +755,13 @@ onMounted(async () => {
 
 .section-header h4 {
   margin: 0;
-  color: #333;
+  color: var(--text-main);
 }
 
 /* 响应式设计 */
 @media (max-width: 1024px) {
   .main-container {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .sidebar {
@@ -771,15 +774,8 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .header {
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .header-left,
-  .header-right {
-    width: 100%;
-    justify-content: center;
+  .groups-page {
+    padding: var(--space-3);
   }
 
   .groups-grid {

@@ -1,110 +1,128 @@
 <template>
   <div class="assignments-page" :class="{ 'student-view': !isTeacher, 'teacher-view': isTeacher }">
-    <!-- 顶部导航 -->
-    <AppTopBar title="📝 实验报告" :roleTagType="roleTagType" :roleText="userRoleText">
-      <template #extra-actions>
-        <el-button @click="router.push('/teaching')">📚 教学资源</el-button>
-        <el-button type="primary" @click="showAssignmentDialog = true" v-if="isTeacher">
-          <el-icon><Plus /></el-icon> 布置任务
-        </el-button>
-      </template>
-    </AppTopBar>
+    <div class="assignments-shell app-page-shell app-page-shell--wide app-fade-up">
+      <!-- 顶部导航 -->
+      <AppTopBar title="📝 实验报告" :roleTagType="roleTagType" :roleText="userRoleText">
+        <template #extra-actions>
+          <el-button @click="router.push('/teaching')">教学资源</el-button>
+          <el-button type="primary" @click="showAssignmentDialog = true" v-if="isTeacher">
+            <el-icon><Plus /></el-icon> 布置任务
+          </el-button>
+        </template>
+      </AppTopBar>
 
-    <div class="role-hero">
-      <el-card shadow="never" class="hero-card">
-        <div v-if="!isTeacher" class="hero-content">
-          <div>
-            <h3>🌟 我的探究进度</h3>
-            <p>完成每个实验任务都能解锁一枚科学徽章，继续加油！</p>
-          </div>
-          <div class="hero-right">
-            <el-progress :percentage="studentProgress" :stroke-width="10" />
-            <el-tag :type="studentProgress >= 70 ? 'success' : 'warning'">当前完成度 {{ studentProgress }}%</el-tag>
-          </div>
-        </div>
-        <div v-else class="hero-content">
-          <div>
-            <h3>🎯 教师任务总览</h3>
-            <p>快速查看布置效率、提交率与批改进度，形成教学闭环。</p>
-          </div>
-          <div class="hero-metrics">
-            <div class="metric-item">
-              <div class="metric-value">{{ stats.total }}</div>
-              <div class="metric-label">任务总数</div>
+      <div class="role-hero">
+        <el-card shadow="never" class="hero-card app-glass-card">
+          <div v-if="!isTeacher" class="hero-content">
+            <div>
+              <h3>🌟 我的探究进度</h3>
+              <p>完成每个实验任务都能解锁一枚科学徽章，继续加油！</p>
             </div>
-            <div class="metric-item">
-              <div class="metric-value">{{ stats.submitted }}</div>
-              <div class="metric-label">已提交</div>
-            </div>
-            <div class="metric-item">
-              <div class="metric-value">{{ stats.graded }}</div>
-              <div class="metric-label">已批改</div>
+            <div class="hero-right">
+              <el-progress :percentage="studentProgress" :stroke-width="10" />
+              <el-tag :type="studentProgress >= 70 ? 'success' : 'warning'">当前完成度 {{ studentProgress }}%</el-tag>
             </div>
           </div>
-        </div>
-      </el-card>
-    </div>
-
-    <!-- 主内容区 -->
-    <div class="main-container">
-      <!-- 左侧筛选 -->
-      <div class="sidebar">
-        <el-card class="filter-card" shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <el-icon><Filter /></el-icon>
-              <span>筛选</span>
+          <div v-else class="hero-content">
+            <div>
+              <h3>🎯 教师任务总览</h3>
+              <p>快速查看布置效率、提交率与批改进度，形成教学闭环。</p>
             </div>
-          </template>
-          <el-form :model="filterForm" label-position="top" size="default">
-            <el-form-item label="班级">
-              <el-select v-model="filterForm.class_id" placeholder="全部班级" clearable style="width: 100%">
-                <el-option
-                  v-for="cls in classes"
-                  :key="cls.id"
-                  :label="cls.class_name"
-                  :value="cls.id"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="状态" v-if="!isTeacher">
-              <el-select v-model="filterForm.status" placeholder="全部状态" clearable style="width: 100%">
-                <el-option label="全部" value="all" />
-                <el-option label="未提交" value="pending" />
-                <el-option label="已提交" value="submitted" />
-                <el-option label="已批改" value="graded" />
-              </el-select>
-            </el-form-item>
-            <el-button type="primary" style="width: 100%" @click="loadAssignments">
-              <el-icon><Search /></el-icon> 查询
-            </el-button>
-          </el-form>
-        </el-card>
-
-        <!-- 统计卡片 -->
-        <el-card class="stats-card mt-4" shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <el-icon><DataLine /></el-icon>
-              <span>我的统计</span>
-            </div>
-          </template>
-          <div class="stats-grid">
-            <div class="stat-item">
-              <div class="stat-value primary">{{ stats.total }}</div>
-              <div class="stat-label">总任务数</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value warning">{{ stats.submitted }}</div>
-              <div class="stat-label">已提交</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value success">{{ stats.graded }}</div>
-              <div class="stat-label">已批改</div>
+            <div class="hero-metrics">
+              <div class="metric-item">
+                <div class="metric-value">{{ stats.total }}</div>
+                <div class="metric-label">任务总数</div>
+              </div>
+              <div class="metric-item">
+                <div class="metric-value">{{ stats.submitted }}</div>
+                <div class="metric-label">已提交</div>
+              </div>
+              <div class="metric-item">
+                <div class="metric-value">{{ stats.graded }}</div>
+                <div class="metric-label">已批改</div>
+              </div>
             </div>
           </div>
         </el-card>
       </div>
+
+      <div class="filter-toolbar app-glass-card">
+        <div class="filter-toolbar__left">
+          <h4>任务视图</h4>
+          <p>按班级与状态快速定位任务，列表与统计会实时同步。</p>
+        </div>
+        <div class="filter-toolbar__right">
+          <el-tag effect="plain" type="info">总任务 {{ stats.total }}</el-tag>
+          <el-tag effect="plain" type="warning">已提交 {{ stats.submitted }}</el-tag>
+          <el-tag effect="plain" type="success">已批改 {{ stats.graded }}</el-tag>
+          <el-button text @click="filtersCollapsed = !filtersCollapsed">
+            {{ filtersCollapsed ? '展开筛选面板' : '收起筛选面板' }}
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 主内容区 -->
+      <div class="main-container" :class="{ 'filters-collapsed': filtersCollapsed }">
+        <!-- 左侧筛选 -->
+        <transition name="filter-collapse">
+          <div v-show="!filtersCollapsed" class="sidebar">
+            <el-card class="filter-card" shadow="hover">
+              <template #header>
+                <div class="card-header">
+                  <el-icon><Filter /></el-icon>
+                  <span>筛选</span>
+                </div>
+              </template>
+              <el-form :model="filterForm" label-position="top" size="default">
+                <el-form-item label="班级">
+                  <el-select v-model="filterForm.class_id" placeholder="全部班级" clearable style="width: 100%">
+                    <el-option
+                      v-for="cls in classes"
+                      :key="cls.id"
+                      :label="cls.class_name"
+                      :value="cls.id"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="状态" v-if="!isTeacher">
+                  <el-select v-model="filterForm.status" placeholder="全部状态" clearable style="width: 100%">
+                    <el-option label="全部" value="all" />
+                    <el-option label="未提交" value="pending" />
+                    <el-option label="已提交" value="submitted" />
+                    <el-option label="已批改" value="graded" />
+                  </el-select>
+                </el-form-item>
+                <el-button type="primary" style="width: 100%" @click="loadAssignments">
+                  <el-icon><Search /></el-icon> 查询
+                </el-button>
+              </el-form>
+            </el-card>
+
+            <!-- 统计卡片 -->
+            <el-card class="stats-card mt-4" shadow="hover">
+              <template #header>
+                <div class="card-header">
+                  <el-icon><DataLine /></el-icon>
+                  <span>我的统计</span>
+                </div>
+              </template>
+              <div class="stats-grid">
+                <div class="stat-item">
+                  <div class="stat-value primary">{{ stats.total }}</div>
+                  <div class="stat-label">总任务数</div>
+                </div>
+                <div class="stat-item">
+                  <div class="stat-value warning">{{ stats.submitted }}</div>
+                  <div class="stat-label">已提交</div>
+                </div>
+                <div class="stat-item">
+                  <div class="stat-value success">{{ stats.graded }}</div>
+                  <div class="stat-label">已批改</div>
+                </div>
+              </div>
+            </el-card>
+          </div>
+        </transition>
 
       <!-- 右侧任务列表 -->
       <div class="content-area">
@@ -140,6 +158,14 @@
               <span class="submission-count">
                 {{ isTeacher ? `📝 ${assignment.submission_count} 人已提交` : '🏅 完成后可获得 10 积分' }}
               </span>
+              <el-tag
+                v-if="isTeacher && !assignment.can_manage"
+                size="small"
+                type="info"
+                effect="plain"
+              >
+                只读
+              </el-tag>
               <span class="created-at">{{ formatDate(assignment.created_at) }}</span>
             </div>
           </el-card>
@@ -153,6 +179,7 @@
             :actionCallback="isTeacher ? () => (showAssignmentDialog = true) : undefined"
           />
         </div>
+      </div>
       </div>
     </div>
 
@@ -253,7 +280,7 @@
           <p><strong>班级：</strong>{{ currentAssignment.class_name || '无' }}</p>
           <p><strong>截止：</strong>{{ formatDate(currentAssignment.due_date) }}</p>
           <p><strong>发布状态：</strong>{{ currentAssignment.is_published ? '已发布' : '未发布' }}</p>
-          <div v-if="isTeacher" style="margin: 10px 0;">
+          <div v-if="isTeacher && canManageCurrentAssignment" style="margin: 10px 0;">
             <el-button
               size="small"
               :type="currentAssignment.is_published ? 'warning' : 'success'"
@@ -272,6 +299,13 @@
               彻底删除任务
             </el-button>
           </div>
+          <el-alert
+            v-else-if="isTeacher && !canManageCurrentAssignment"
+            title="当前任务为只读模式：你可以查看提交与下载附件，但不能发布、删除或批改。"
+            type="info"
+            :closable="false"
+            style="margin: 10px 0"
+          />
           <div v-if="currentAssignment.requirement" class="requirement">
             <strong>实验要求：</strong>
             <p>{{ currentAssignment.requirement }}</p>
@@ -438,7 +472,12 @@
             <el-table-column label="操作" width="150">
               <template #default="{ row }">
                 <el-button size="small" @click="viewSubmission(row)">查看</el-button>
-                <el-button size="small" type="primary" @click="showGradeDialog(row)" v-if="row.status === 'submitted'">
+                <el-button
+                  size="small"
+                  type="primary"
+                  @click="showGradeDialog(row)"
+                  v-if="row.status === 'submitted' && canGradeCurrentAssignment"
+                >
                   批改
                 </el-button>
                 <el-button size="small" type="success" plain @click="downloadReport(row)" v-if="row.report_file_name">
@@ -468,6 +507,44 @@
             placeholder="写下你的评语..."
           />
         </el-form-item>
+        <el-form-item label="AI 建议">
+          <div class="ai-feedback-row">
+            <el-button
+              type="primary"
+              plain
+              :loading="aiFeedbackLoading"
+              :disabled="!currentSubmission || !currentAssignment"
+              @click="generateAIFeedback"
+            >
+              生成点评建议
+            </el-button>
+            <el-tag v-if="aiFeedbackSource" size="small" type="info" effect="plain">来源：{{ aiFeedbackSource }}</el-tag>
+          </div>
+          <div v-if="aiFeedbackDraft" class="ai-feedback-draft">
+            <div class="draft-score-row">
+              <span>建议分数区间：{{ aiFeedbackDraft.score_band }}</span>
+              <el-button size="small" @click="applyFeedbackPart('score')">采纳分数</el-button>
+            </div>
+            <div class="draft-block">
+              <strong>优点</strong>
+              <div class="draft-lines">{{ aiFeedbackDraft.strengths.join('；') || '暂无' }}</div>
+            </div>
+            <div class="draft-block">
+              <strong>改进建议</strong>
+              <div class="draft-lines">{{ aiFeedbackDraft.improvements.join('；') || '暂无' }}</div>
+            </div>
+            <div class="draft-block">
+              <strong>评语草稿</strong>
+              <div class="draft-lines">{{ aiFeedbackDraft.teacher_comment_draft || '暂无' }}</div>
+            </div>
+            <div class="draft-actions">
+              <el-button size="small" @click="applyFeedbackPart('strengths')">采纳优点</el-button>
+              <el-button size="small" @click="applyFeedbackPart('improvements')">采纳改进</el-button>
+              <el-button size="small" @click="applyFeedbackPart('comment')">采纳评语</el-button>
+              <el-button size="small" type="primary" @click="applyFeedbackPart('all')">一键全部采纳</el-button>
+            </div>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showGradeDialogVisible = false">取消</el-button>
@@ -487,6 +564,7 @@ import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus';
 import StatusPanel from '../components/StatusPanel.vue';
 import AppTopBar from '../components/AppTopBar.vue';
 import { useCurrentUser } from '../composables/useCurrentUser';
+import { getErrorMessage } from '../utils/error';
 import {
   getAssignments,
   createAssignment,
@@ -496,12 +574,14 @@ import {
   submitAssignment as submitAssignmentReport,
   submitAssignmentWithFile,
   gradeAssignment,
+  getAssignmentAIFeedback,
   getMySubmission,
   downloadSubmissionReport,
   type Assignment,
+  type AssignmentAIFeedback,
   type AssignmentSubmission,
 } from '../api/assignments';
-import { getHistory, type Telemetry } from '../api';
+import { getHistory, resolveBackendAssetUrl, type Telemetry } from '../api';
 import { getClasses } from '../api/classes';
 import { getDevices } from '../api/devices';
 
@@ -550,11 +630,15 @@ const filterForm = ref({
   class_id: undefined as number | undefined,
   status: undefined as string | undefined
 });
+const filtersCollapsed = ref(false);
 
 // 对话框
 const showAssignmentDialog = ref(false);
 const showDetailDialog = ref(false);
 const showGradeDialogVisible = ref(false);
+const aiFeedbackLoading = ref(false);
+const aiFeedbackSource = ref('');
+const aiFeedbackDraft = ref<AssignmentAIFeedback | null>(null);
 const assignmentFormRef = ref<FormInstance>();
 const currentAssignment = ref<Assignment | null>(null);
 const submissions = ref<AssignmentSubmission[]>([]);
@@ -567,6 +651,8 @@ const sensorLoading = ref(false);
 const sensorSnapshot = ref<Telemetry | null>(null);
 const submissionPhotoList = ref<UploadUserFile[]>([]);
 const createdPhotoBlobUrls = new Set<string>();
+const canManageCurrentAssignment = computed(() => Boolean(currentAssignment.value?.can_manage));
+const canGradeCurrentAssignment = computed(() => Boolean(currentAssignment.value?.can_grade));
 
 // 页面级错误/空状态引导（403/401）
 const pageErrorDetail = ref<string>('');
@@ -592,9 +678,7 @@ const submissionForm = ref({
 });
 
 const resolvePhotoUrl = (url: string) => {
-  if (/^(https?:|blob:|data:)/i.test(url)) return url;
-  const normalized = url.startsWith('/') ? url : `/${url}`;
-  return `${window.location.protocol}//${window.location.hostname}:8000${normalized}`;
+  return resolveBackendAssetUrl(url);
 };
 
 const clearPhotoBlobUrls = () => {
@@ -745,12 +829,80 @@ const gradeForm = ref({
   teacher_comment: ''
 });
 
+const parseScoreBand = (band: string): number | null => {
+  const match = band.match(/(\d+)(?:\s*[-~至]\s*(\d+))?/);
+  if (!match) return null;
+
+  const low = Number(match[1]);
+  const high = Number(match[2] || match[1]);
+  if (Number.isNaN(low) || Number.isNaN(high)) return null;
+
+  return Math.max(0, Math.min(100, Math.round((low + high) / 2)));
+};
+
+const generateAIFeedback = async () => {
+  if (!currentAssignment.value || !currentSubmission.value) {
+    ElMessage.warning('请先选择待批改的提交记录');
+    return;
+  }
+
+  aiFeedbackLoading.value = true;
+  try {
+    const feedback = await getAssignmentAIFeedback(currentAssignment.value.id, currentSubmission.value.id);
+    aiFeedbackDraft.value = feedback;
+    aiFeedbackSource.value = feedback.source;
+    ElMessage.success(`AI 建议生成成功（${feedback.source}）`);
+  } catch (error: any) {
+    ElMessage.error(getErrorMessage(error, 'AI 建议生成失败'));
+  } finally {
+    aiFeedbackLoading.value = false;
+  }
+};
+
+const appendTeacherComment = (text: string) => {
+  const cleaned = text.trim();
+  if (!cleaned) return;
+  gradeForm.value.teacher_comment = gradeForm.value.teacher_comment
+    ? `${gradeForm.value.teacher_comment}\n${cleaned}`
+    : cleaned;
+};
+
+const applyFeedbackPart = (part: 'score' | 'strengths' | 'improvements' | 'comment' | 'all') => {
+  if (!aiFeedbackDraft.value) {
+    ElMessage.warning('请先生成 AI 建议');
+    return;
+  }
+
+  const feedback = aiFeedbackDraft.value;
+
+  if (part === 'score' || part === 'all') {
+    const suggestedScore = parseScoreBand(feedback.score_band);
+    if (suggestedScore !== null) {
+      gradeForm.value.score = suggestedScore;
+    }
+  }
+
+  if (part === 'strengths' || part === 'all') {
+    appendTeacherComment(feedback.strengths?.length ? `优点：${feedback.strengths.join('；')}` : '');
+  }
+
+  if (part === 'improvements' || part === 'all') {
+    appendTeacherComment(feedback.improvements?.length ? `改进建议：${feedback.improvements.join('；')}` : '');
+  }
+
+  if (part === 'comment' || part === 'all') {
+    appendTeacherComment(feedback.teacher_comment_draft || '');
+  }
+
+  ElMessage.success('已采纳 AI 建议');
+};
+
 // 加载数据
 const loadClasses = async () => {
   try {
     classes.value = await getClasses({ is_active: true });
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载班级失败');
+    ElMessage.error(getErrorMessage(error, '加载班级失败'));
   }
 };
 
@@ -758,8 +910,17 @@ const loadDevices = async () => {
   try {
     devices.value = await getDevices();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载设备失败');
+    ElMessage.error(getErrorMessage(error, '加载设备失败'));
   }
+};
+
+const sanitizeAssignment = (item: Assignment): Assignment => {
+  const normalizedTitle = String(item.title || '').trim() || `未命名任务 #${item.id}`;
+  return {
+    ...item,
+    title: normalizedTitle,
+    description: item.description || '',
+  };
 };
 
 const loadAssignments = async (showError = true): Promise<boolean> => {
@@ -776,7 +937,10 @@ const loadAssignments = async (showError = true): Promise<boolean> => {
     if (!isTeacher.value && filterForm.value.status) {
       params.status = filterForm.value.status;
     }
-    assignments.value = await getAssignments(params);
+    const rawAssignments = await getAssignments(params);
+    assignments.value = rawAssignments
+      .filter((item: Assignment | null | undefined): item is Assignment => Boolean(item && item.id))
+      .map((item) => sanitizeAssignment(item));
     if (!isTeacher.value) {
       await loadStudentStats();
     } else {
@@ -788,7 +952,7 @@ const loadAssignments = async (showError = true): Promise<boolean> => {
   } catch (error: any) {
     if (showError) {
       const status = error.response?.status;
-      const detail = error.response?.data?.detail || '加载任务失败';
+      const detail = getErrorMessage(error, '加载任务失败');
       if (status === 401) {
         pageErrorDetail.value = '未登录或登录已过期，请重新登录。';
         pageErrorActionText.value = '去登录';
@@ -809,6 +973,10 @@ const loadAssignments = async (showError = true): Promise<boolean> => {
 };
 
 const toggleAssignmentPublish = async (assignment: Assignment) => {
+  if (!assignment.can_manage) {
+    ElMessage.warning('该任务为只读模式，无法变更发布状态');
+    return;
+  }
   try {
     const targetStatus = !assignment.is_published;
     const actionText = targetStatus ? '重新发布' : '取消发布';
@@ -820,7 +988,7 @@ const toggleAssignmentPublish = async (assignment: Assignment) => {
     await loadAssignments(false);
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error(error.response?.data?.detail || '操作失败');
+      ElMessage.error(getErrorMessage(error, '操作失败'));
     }
   } finally {
     submitting.value = false;
@@ -828,6 +996,10 @@ const toggleAssignmentPublish = async (assignment: Assignment) => {
 };
 
 const deleteAssignmentPermanently = async (assignment: Assignment) => {
+  if (!assignment.can_manage) {
+    ElMessage.warning('该任务为只读模式，无法删除');
+    return;
+  }
   try {
     const submissionHint = assignment.submission_count
       ? `该任务下已有 ${assignment.submission_count} 份提交记录，将一并删除。`
@@ -846,7 +1018,7 @@ const deleteAssignmentPermanently = async (assignment: Assignment) => {
     ElMessage.success('任务已彻底删除');
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error(error.response?.data?.detail || '删除失败');
+      ElMessage.error(getErrorMessage(error, '删除失败'));
     }
   } finally {
     submitting.value = false;
@@ -865,7 +1037,7 @@ const viewAssignment = async (assignment: Assignment) => {
     try {
       submissions.value = await getSubmissions(assignment.id);
     } catch (error: any) {
-      ElMessage.error(error.response?.data?.detail || '加载提交记录失败');
+      ElMessage.error(getErrorMessage(error, '加载提交记录失败'));
     }
   } else {
     await loadSensorSnapshot(assignment);
@@ -928,7 +1100,7 @@ const submitAssignment = async () => {
       is_published: true
     };
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '发布失败');
+    ElMessage.error(getErrorMessage(error, '发布失败'));
   } finally {
     submitting.value = false;
   }
@@ -975,7 +1147,7 @@ const submitReport = async () => {
     showDetailDialog.value = false;
     stats.value.submitted = Math.min(stats.value.submitted + 1, stats.value.total);
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '提交失败');
+    ElMessage.error(getErrorMessage(error, '提交失败'));
   } finally {
     submitting.value = false;
   }
@@ -1025,21 +1197,31 @@ const downloadReport = async (submission: AssignmentSubmission) => {
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '下载失败');
+    ElMessage.error(getErrorMessage(error, '下载失败'));
   }
 };
 
 // 显示批改对话框
 const showGradeDialog = (submission: AssignmentSubmission) => {
+  if (!canGradeCurrentAssignment.value) {
+    ElMessage.warning('该任务为只读模式，无法批改');
+    return;
+  }
   currentSubmission.value = submission;
   gradeForm.value.score = 80;
   gradeForm.value.teacher_comment = '';
+  aiFeedbackSource.value = '';
+  aiFeedbackDraft.value = null;
   showGradeDialogVisible.value = true;
 };
 
 // 提交批改
 const submitGrade = async () => {
   if (!currentAssignment.value || !currentSubmission.value) return;
+  if (!canGradeCurrentAssignment.value) {
+    ElMessage.warning('该任务为只读模式，无法批改');
+    return;
+  }
 
   submitting.value = true;
   try {
@@ -1048,7 +1230,7 @@ const submitGrade = async () => {
     showGradeDialogVisible.value = false;
     viewAssignment(currentAssignment.value);
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '批改失败');
+    ElMessage.error(getErrorMessage(error, '批改失败'));
   } finally {
     submitting.value = false;
   }
@@ -1146,128 +1328,167 @@ watch(showDetailDialog, (visible) => {
 <style scoped>
 .assignments-page {
   min-height: 100vh;
-  background-color: #f0f2f5;
+  padding-bottom: var(--space-6);
+  background:
+    radial-gradient(circle at 6% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
+}
+
+.assignments-shell {
+  padding-top: var(--space-5);
 }
 
 .role-hero {
-  max-width: 1400px;
-  margin: 16px auto 0;
-  padding: 0 20px;
+  margin: 0 0 var(--space-4);
 }
 
 .hero-card {
-  border-radius: 12px;
-  border: 1px solid #d9ecff;
+  border-radius: 16px;
+  border: 1px solid var(--el-border-color-light);
+  background: var(--glass-bg-strong);
 }
 
 .hero-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
+  gap: var(--space-5);
 }
 
 .hero-content h3 {
   margin: 0;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .hero-content p {
   margin: 6px 0 0;
-  color: #606266;
+  color: var(--text-secondary);
 }
 
 .hero-right {
   width: 340px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .hero-metrics {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .metric-item {
   min-width: 90px;
   text-align: center;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #f5f7fa;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--el-fill-color-light);
 }
 
 .metric-value {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
-  color: #409eff;
+  color: var(--el-color-primary);
 }
 
 .metric-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
 }
 
-.header {
+.filter-toolbar {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 15px 24px;
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-radius: 14px;
+  margin-bottom: var(--space-4);
 }
 
-.header-left {
+.filter-toolbar__left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.filter-toolbar__left h4 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.filter-toolbar__left p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.filter-toolbar__right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
-.header-left h2 {
-  margin: 0;
-  font-size: 20px;
+.filter-collapse-enter-active,
+.filter-collapse-leave-active {
+  transition: all var(--motion-base) var(--ease-standard);
+}
+
+.filter-collapse-enter-from,
+.filter-collapse-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
 }
 
 .main-container {
-  display: flex;
-  padding: 20px;
-  gap: 20px;
-  max-width: 1400px;
-  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-5);
+}
+
+.main-container.filters-collapsed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .sidebar {
-  width: 280px;
-  flex-shrink: 0;
+  width: 100%;
+  position: sticky;
+  top: var(--space-4);
+  align-self: start;
 }
 
 .filter-card,
 .stats-card {
-  border-radius: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-light);
 }
 
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 500;
+  gap: var(--space-2);
+  font-weight: 600;
+  color: var(--text-main);
 }
 
 .mt-4 {
-  margin-top: 16px;
+  margin-top: var(--space-4);
 }
 
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .stat-item {
   text-align: center;
-  padding: 12px 8px;
-  background: #f5f7fa;
-  border-radius: 8px;
+  padding: 12px 10px;
+  background: var(--el-fill-color-light);
+  border-radius: 10px;
 }
 
 .stat-value {
@@ -1275,25 +1496,25 @@ watch(showDetailDialog, (visible) => {
   font-weight: bold;
 }
 
-.stat-value.primary { color: #409EFF; }
-.stat-value.warning { color: #E6A23C; }
-.stat-value.success { color: #67C23A; }
+.stat-value.primary { color: var(--el-color-primary); }
+.stat-value.warning { color: var(--el-color-warning); }
+.stat-value.success { color: var(--el-color-success); }
 
 .stat-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
   margin-top: 4px;
 }
 
 .content-area {
-  flex: 1;
+  width: 100%;
   min-width: 0;
 }
 
 .assignment-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
 }
 
 .assignment-card {
@@ -1302,7 +1523,7 @@ watch(showDetailDialog, (visible) => {
 }
 
 .student-list .assignment-card {
-  border: 1px solid #e1f3d8;
+  border: 1px solid var(--el-border-color-light);
 }
 
 .assignment-card:hover {
@@ -1319,11 +1540,11 @@ watch(showDetailDialog, (visible) => {
 .assignment-title {
   margin: 0;
   font-size: 16px;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .assignment-description {
-  color: #606266;
+  color: var(--text-secondary);
   font-size: 14px;
   margin: 0 0 12px 0;
   display: -webkit-box;
@@ -1336,7 +1557,7 @@ watch(showDetailDialog, (visible) => {
   display: flex;
   gap: 16px;
   font-size: 13px;
-  color: #909399;
+  color: var(--text-tertiary);
   margin-bottom: 12px;
 }
 
@@ -1344,11 +1565,11 @@ watch(showDetailDialog, (visible) => {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
 }
 
 .submission-count {
-  color: #409EFF;
+  color: var(--el-color-primary);
 }
 
 .assignment-detail {
@@ -1359,7 +1580,7 @@ watch(showDetailDialog, (visible) => {
 .detail-section {
   margin-bottom: 24px;
   padding-bottom: 24px;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .detail-section:last-child {
@@ -1368,14 +1589,14 @@ watch(showDetailDialog, (visible) => {
 
 .detail-section h4 {
   margin: 0 0 12px 0;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .submission-wizard {
-  border: 1px solid #e7f0ea;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 12px;
   padding: 14px;
-  background: #fbfefc;
+  background: var(--glass-bg);
 }
 
 .wizard-steps {
@@ -1383,18 +1604,18 @@ watch(showDetailDialog, (visible) => {
 }
 
 .wizard-panel {
-  border: 1px dashed #d6e7dd;
+  border: 1px dashed var(--el-border-color);
   border-radius: 10px;
   padding: 12px;
-  background: #ffffff;
+  background: var(--bg-card);
 }
 
 .sensor-preview-card {
   margin-top: 6px;
   padding: 10px;
   border-radius: 8px;
-  background: #f4faf6;
-  border: 1px solid #e1f0e6;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-light);
 }
 
 .sensor-preview-header {
@@ -1408,7 +1629,7 @@ watch(showDetailDialog, (visible) => {
 .sensor-preview-header h5 {
   margin: 0;
   font-size: 14px;
-  color: #365746;
+  color: var(--text-main);
 }
 
 .sensor-preview-grid {
@@ -1420,8 +1641,8 @@ watch(showDetailDialog, (visible) => {
 .sensor-item {
   border-radius: 8px;
   padding: 8px;
-  background: #ffffff;
-  border: 1px solid #e5efe8;
+  background: var(--bg-card);
+  border: 1px solid var(--el-border-color-light);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1429,18 +1650,18 @@ watch(showDetailDialog, (visible) => {
 
 .sensor-item span {
   font-size: 12px;
-  color: #668575;
+  color: var(--text-tertiary);
 }
 
 .sensor-item strong {
   font-size: 18px;
-  color: #1f5f3f;
+  color: var(--text-main);
 }
 
 .sensor-time {
   grid-column: 1 / -1;
   font-size: 12px;
-  color: #6b8a7b;
+  color: var(--text-tertiary);
   margin-top: 2px;
 }
 
@@ -1452,17 +1673,17 @@ watch(showDetailDialog, (visible) => {
 }
 
 .submit-rocket-btn {
-  background: linear-gradient(120deg, #2f8a57, #55a870);
-  border-color: #2f8a57;
+  background: linear-gradient(120deg, var(--color-plant-600), var(--color-plant-500));
+  border-color: var(--color-plant-600);
 }
 
 .submit-rocket-btn:hover {
-  background: linear-gradient(120deg, #28764b, #4c9c66);
-  border-color: #28764b;
+  background: linear-gradient(120deg, var(--color-plant-700), var(--color-plant-600));
+  border-color: var(--color-plant-700);
 }
 
 .requirement {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   padding: 12px;
   border-radius: 4px;
   margin-top: 8px;
@@ -1474,12 +1695,65 @@ watch(showDetailDialog, (visible) => {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: #606266;
+  color: var(--text-secondary);
+}
+
+.ai-feedback-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-feedback-draft {
+  margin-top: 10px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--el-fill-color-light) 56%, transparent);
+}
+
+.draft-score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.draft-block {
+  margin-top: 8px;
+}
+
+.draft-lines {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (max-width: 1100px) {
+  .main-container {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .sidebar {
+    position: static;
+  }
 }
 
 @media (max-width: 768px) {
-  .role-hero {
-    padding: 0 12px;
+  .assignments-shell {
+    padding-top: var(--space-3);
   }
 
   .hero-content {
@@ -1495,9 +1769,13 @@ watch(showDetailDialog, (visible) => {
     width: 100%;
   }
 
-  .main-container {
+  .filter-toolbar {
     flex-direction: column;
-    padding: 12px;
+    align-items: flex-start;
+  }
+
+  .filter-toolbar__right {
+    justify-content: flex-start;
   }
 
   .sensor-preview-grid {

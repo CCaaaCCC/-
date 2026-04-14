@@ -150,6 +150,8 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import type { UploadRequestOptions } from 'element-plus';
+import { resolveBackendAssetUrl } from '../api';
+import { getErrorMessage } from '../utils/error';
 import { getMyProfile, updateMyProfile, uploadProfileAvatar, type UserProfile } from '../api/profile';
 import StatusPanel from '../components/StatusPanel.vue';
 import NotificationBell from '../components/NotificationBell.vue';
@@ -175,10 +177,7 @@ const roleText = (role?: string) => {
 };
 
 const resolvedAvatarUrl = computed(() => {
-  const raw = profile.value?.avatar_url;
-  if (!raw) return '';
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return `http://localhost:8000${raw}`;
+  return resolveBackendAssetUrl(profile.value?.avatar_url);
 });
 
 const formatDate = (dateStr?: string) => {
@@ -195,7 +194,7 @@ const loadProfile = async () => {
     pageErrorDetail.value = '';
   } catch (error: any) {
     const status = error.response?.status;
-    const detail = error.response?.data?.detail || '加载个人信息失败';
+    const detail = getErrorMessage(error, '加载个人信息失败');
     if (status === 401) {
       pageErrorDetail.value = '未登录或登录已过期，请重新登录。';
       pageErrorActionText.value = '去登录';
@@ -227,7 +226,7 @@ const saveProfile = async () => {
     profile.value = await updateMyProfile({ real_name: realName });
     ElMessage.success('资料已更新');
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '保存失败');
+    ElMessage.error(getErrorMessage(error, '保存失败'));
   } finally {
     savingProfile.value = false;
   }
@@ -251,7 +250,7 @@ const handleAvatarUpload = async (options: UploadRequestOptions) => {
     }
     ElMessage.success('头像上传成功');
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '头像上传失败');
+    ElMessage.error(getErrorMessage(error, '头像上传失败'));
   }
 };
 
@@ -261,7 +260,9 @@ onMounted(loadProfile);
 <style scoped>
 .profile-page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background:
+    radial-gradient(circle at 8% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
 }
 
 .header {
@@ -269,12 +270,13 @@ onMounted(loadProfile);
   justify-content: space-between;
   align-items: center;
   padding: 15px 24px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: var(--glass-bg-strong);
+  border-bottom: 1px solid var(--el-border-color-light);
+  box-shadow: var(--shadow-soft);
 }
 
 .content {
-  max-width: 1300px;
+  max-width: var(--layout-max-width);
   margin: 0 auto;
   padding: 20px;
 }
@@ -301,7 +303,7 @@ onMounted(loadProfile);
 }
 
 .todo-item {
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   padding: 14px 10px;
   text-align: center;
@@ -310,24 +312,24 @@ onMounted(loadProfile);
 .todo-num {
   font-size: 24px;
   font-weight: bold;
-  color: #409eff;
+  color: var(--el-color-primary);
 }
 
 .todo-num.danger {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 
 .todo-num.warning {
-  color: #e6a23c;
+  color: var(--el-color-warning);
 }
 
 .todo-num.success {
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 
 .todo-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
   margin-top: 4px;
 }
 

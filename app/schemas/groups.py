@@ -25,6 +25,8 @@ class StudyGroupResponse(StudyGroupBase):
     id: int
     class_name: str | None = None
     device_name: str | None = None
+    created_by: int | None = None
+    can_manage: bool = False
     member_count: int = 0
     members: list[dict] = []
     created_at: datetime.datetime
@@ -54,3 +56,17 @@ class GroupMemberResponse(BaseModel):
     joined_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class GroupMigrateRequest(BaseModel):
+    target_class_id: int
+    target_device_id: int | None = None
+
+
+class GroupMemberRolePatch(BaseModel):
+    member_id: int
+    role: str
+
+
+class GroupMemberBatchRoleUpdateRequest(BaseModel):
+    updates: list[GroupMemberRolePatch]

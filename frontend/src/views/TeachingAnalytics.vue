@@ -1,15 +1,16 @@
 <template>
-  <div class="analytics-page">
-    <div class="header">
-      <div>
-        <h2>教学分析中心</h2>
-        <p>用于答辩展示教学闭环：布置 -> 参与 -> 反馈</p>
-      </div>
-      <div class="header-actions">
-        <el-button @click="$router.push('/')">返回工作台</el-button>
+  <div class="analytics-page app-page-shell app-page-shell--wide app-fade-up">
+    <AppTopBar
+      title="教学分析中心"
+      :roleTagType="roleTagType"
+      :roleText="roleLabel"
+      subtitle="用于答辩展示教学闭环：布置 -> 参与 -> 反馈"
+    >
+      <template #extra-actions>
+        <el-button @click="router.push('/')">返回工作台</el-button>
         <el-button type="primary" @click="refreshData" :loading="loading">刷新数据</el-button>
-      </div>
-    </div>
+      </template>
+    </AppTopBar>
 
     <el-alert
       v-if="!canView"
@@ -92,11 +93,15 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
+import AppTopBar from '../components/AppTopBar.vue';
 import { getAssignments, getSubmissions, getDevices, getHistory } from '../api';
+import { getErrorMessage } from '../utils/error';
 
 const router = useRouter();
 const role = localStorage.getItem('role') || 'student';
 const canView = computed(() => ['teacher', 'admin'].includes(role));
+const roleTagType = computed(() => (role === 'admin' ? 'danger' : 'warning'));
+const roleLabel = computed(() => (role === 'admin' ? '管理员' : '教师'));
 
 const loading = ref(false);
 const assignments = ref<any[]>([]);
@@ -186,7 +191,7 @@ const refreshData = async () => {
     );
     deviceHealth.value = healthData;
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载教学分析数据失败');
+    ElMessage.error(getErrorMessage(error, '加载教学分析数据失败'));
   } finally {
     loading.value = false;
   }
@@ -198,66 +203,49 @@ onMounted(refreshData);
 <style scoped>
 .analytics-page {
   min-height: 100vh;
-  background: linear-gradient(180deg, #f6fbff 0%, #f7f9fc 100%);
-  padding: 20px;
-}
-
-.header {
-  max-width: 1280px;
-  margin: 0 auto 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-
-.header h2 {
-  margin: 0;
-}
-
-.header p {
-  margin: 6px 0 0;
-  color: #666;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
+  background:
+    radial-gradient(circle at 8% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
+  padding: 0 var(--space-4) var(--space-6);
 }
 
 .mb-4 {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .kpis {
-  max-width: 1280px;
-  margin: 0 auto 16px;
+  margin: 0 0 var(--space-4);
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
   grid-template-columns: repeat(4, minmax(180px, 1fr));
 }
 
 .kpi-card {
-  border-radius: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--el-border-color-light);
+  background: var(--glass-bg-strong);
 }
 
 .kpi-value {
   font-size: 30px;
-  color: #1f78d1;
+  color: var(--el-color-primary);
   font-weight: 700;
 }
 
 .kpi-label {
   margin-top: 4px;
-  color: #7a8795;
+  color: var(--text-tertiary);
 }
 
 .grid-two {
-  max-width: 1280px;
-  margin: 0 auto;
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
   grid-template-columns: 1fr 1fr;
+}
+
+.grid-two :deep(.el-card) {
+  border: 1px solid var(--el-border-color-light);
+  background: var(--glass-bg-strong);
 }
 
 .card-header {
@@ -268,7 +256,7 @@ onMounted(refreshData);
 
 .ranking-item {
   padding: 10px 0;
-  border-bottom: 1px dashed #e7ebf0;
+  border-bottom: 1px dashed var(--el-border-color-light);
 }
 
 .ranking-item:last-child {
@@ -283,12 +271,12 @@ onMounted(refreshData);
 .ranking-meta {
   margin-top: 5px;
   font-size: 12px;
-  color: #7a8795;
+  color: var(--text-tertiary);
 }
 
 .health-item {
   padding: 10px 0;
-  border-bottom: 1px dashed #e7ebf0;
+  border-bottom: 1px dashed var(--el-border-color-light);
 }
 
 .health-item:last-child {
@@ -303,22 +291,21 @@ onMounted(refreshData);
 }
 
 .health-metrics {
-  color: #7a8795;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 
 @media (max-width: 900px) {
+  .analytics-page {
+    padding: 0 0 var(--space-4);
+  }
+
   .kpis {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 
   .grid-two {
     grid-template-columns: 1fr;
-  }
-
-  .header {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }
 </style>

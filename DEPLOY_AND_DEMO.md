@@ -14,7 +14,10 @@ docker-compose up -d --build
 
 说明：
 - `docker-compose.yml` 已包含 MySQL、FastAPI、Vue 静态站点。
-- 若需要 AI 科学助手接入通义千问，请在系统环境变量或 `.env` 中提供 `QWEN_API_KEY`。
+- 若需要 AI 科学助手接入通义千问，请在系统环境变量或 `.env` 中提供：
+  - `QWEN_API_KEY`（仅环境变量方式，不写入源码）
+  - `QWEN_MODEL`（建议 `qwen-plus-2025-07-28`）
+  - 可选运行参数：`AI_TIMEOUT_SECONDS`、`AI_STREAM_TIMEOUT_SECONDS`、`AI_RETRY_COUNT`。
 
 ## 2. 本地开发运行
 

@@ -7,7 +7,7 @@
         <el-tag :type="roleTagType">{{ userRoleText }}</el-tag>
       </div>
       <div class="header-right">
-        <el-button v-if="canManage" @click="showStatsDialog = true">📊 学习统计</el-button>
+        <el-button v-if="canManage" @click="openStatsDialog">📊 学习统计</el-button>
         <NotificationBell />
         <el-button @click="$router.push('/')">返回工作台</el-button>
         <el-button type="danger" plain @click="handleLogout">退出登录</el-button>
@@ -174,7 +174,7 @@
 
         <!-- 教师管理员操作栏 -->
         <div v-if="canManage" class="action-bar">
-          <el-button type="primary" @click="showContentEditor = true; editingContent = null">
+          <el-button type="primary" @click="openCreateContentEditor">
             + 新建内容
           </el-button>
         </div>
@@ -209,11 +209,28 @@
                 <div class="generic-cover">📘 教学资源</div>
               </template>
 
-              <div v-if="canManage" class="manager-overlay" @click.stop>
-                <el-button circle size="small" @click="editContent(content)">
+              <div v-if="canManageCard(content)" class="manager-overlay" @click.stop>
+                <el-button v-if="canEditContent(content)" circle size="small" @click="editContent(content)">
                   <el-icon><Edit /></el-icon>
                 </el-button>
-                <el-button circle size="small" type="danger" plain @click="deleteContentItem(content.id)">
+                <el-button
+                  v-if="canPublishContent(content)"
+                  circle
+                  size="small"
+                  :type="content.is_published ? 'warning' : 'success'"
+                  plain
+                  @click="togglePublish(content)"
+                >
+                  <el-icon><Hide v-if="content.is_published" /><View v-else /></el-icon>
+                </el-button>
+                <el-button
+                  v-if="canDeleteContent(content)"
+                  circle
+                  size="small"
+                  type="danger"
+                  plain
+                  @click="deleteContentItem(content.id)"
+                >
                   <el-icon><Delete /></el-icon>
                 </el-button>
               </div>
@@ -222,6 +239,10 @@
             <div class="card-body">
               <h3 class="content-title">{{ content.title }}</h3>
               <p class="content-summary">{{ getContentSummary(content) }}</p>
+              <p class="content-meta-line">
+                <span>发布者：{{ getPublisherName(content) }}</span>
+                <span>发布时间：{{ formatDateOrDash(content.published_at) }}</span>
+              </p>
             </div>
 
             <div class="card-footer">
@@ -276,7 +297,7 @@
     <el-dialog
       v-model="showContentEditor"
       :title="editingContent ? '编辑内容' : '新建内容'"
-      width="800px"
+      width="980px"
     >
       <el-form :model="contentForm" label-width="80px">
         <el-form-item label="标题" required>
@@ -307,12 +328,45 @@
           <el-input v-model="contentForm.video_url" placeholder="视频 URL" />
         </el-form-item>
         <el-form-item label="内容" v-if="contentForm.content_type === 'article'">
-          <el-input
-            v-model="contentForm.content"
-            type="textarea"
-            :rows="10"
-            placeholder="输入文章内容（支持 Markdown）"
-          />
+          <div class="md-editor-shell">
+            <div class="md-toolbar">
+              <el-button size="small" @click="applyMarkdownFormat('h1')">H1</el-button>
+              <el-button size="small" @click="applyMarkdownFormat('h2')">H2</el-button>
+              <el-button size="small" @click="applyMarkdownFormat('h3')">H3</el-button>
+              <el-divider direction="vertical" />
+              <el-button size="small" @click="applyMarkdownFormat('bold')">加粗</el-button>
+              <el-button size="small" @click="applyMarkdownFormat('ul')">无序列表</el-button>
+              <el-button size="small" @click="applyMarkdownFormat('ol')">有序列表</el-button>
+              <el-button size="small" @click="applyMarkdownFormat('quote')">引用</el-button>
+            </div>
+
+            <el-tabs v-model="mdEditorTab" class="md-editor-tabs">
+              <el-tab-pane label="编辑" name="edit">
+                <div class="md-pane md-pane-editor">
+                  <div class="md-pane-title">Markdown 编辑</div>
+                  <el-input
+                    ref="contentEditorRef"
+                    v-model="contentForm.content"
+                    class="md-input"
+                    type="textarea"
+                    :rows="16"
+                    placeholder="输入文章内容（支持 Markdown）"
+                  />
+                </div>
+              </el-tab-pane>
+
+              <el-tab-pane label="预览" name="preview">
+                <div class="md-pane md-pane-preview">
+                  <div class="md-pane-title">实时预览</div>
+                  <div class="md-preview-body" v-html="formatContent(contentForm.content)"></div>
+                </div>
+              </el-tab-pane>
+            </el-tabs>
+          </div>
+          <div class="ai-polish-hint">
+            需要润色、扩写或完整生成时，请在右下角 AI 助手直接输入自然语言命令。
+            当前页面打开“文章”编辑器后，聊天回复会出现“插入到教学正文”按钮，插入时将自动规范为 Markdown 格式。
+          </div>
         </el-form-item>
         <el-form-item label="发布状态">
           <el-switch v-model="contentForm.is_published" active-text="发布" inactive-text="草稿" />
@@ -337,7 +391,28 @@
             {{ getTypeText(currentContent.content_type) }}
           </el-tag>
           <span class="meta-text">分类：{{ currentContent.category?.name }}</span>
+          <span class="meta-text">发布者：{{ getPublisherName(currentContent) }}</span>
+          <span class="meta-text">发布时间：{{ formatDateOrDash(currentContent.published_at) }}</span>
           <span class="meta-text">阅读：{{ currentContent.view_count }}</span>
+        </div>
+
+        <div v-if="canManage && canManageCard(currentContent)" class="detail-manager-actions">
+          <el-button v-if="canEditContent(currentContent)" plain @click="editCurrentContent">编辑内容</el-button>
+          <el-button
+            v-if="canPublishContent(currentContent)"
+            :type="currentContent.is_published ? 'warning' : 'success'"
+            @click="togglePublish(currentContent)"
+          >
+            {{ currentContent.is_published ? '取消发布' : '立即发布' }}
+          </el-button>
+          <el-button
+            v-if="canDeleteContent(currentContent)"
+            type="danger"
+            plain
+            @click="deleteContentItem(currentContent.id)"
+          >
+            删除内容
+          </el-button>
         </div>
         
         <!-- 视频内容 -->
@@ -439,11 +514,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Folder, Search, VideoPlay, Edit, Delete } from '@element-plus/icons-vue';
+import { Folder, Search, VideoPlay, Edit, Delete, View, Hide } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import MarkdownIt from 'markdown-it';
+import { getErrorMessage } from '../utils/error';
+import { clearAuthSession, getUserRole } from '../utils/authSession';
+import { resolveBackendAssetUrl } from '../api';
 import {
   getCategories,
   getCategoriesTree,
@@ -466,11 +544,21 @@ import {
   getLearningStats,
   getStudentsProgress
 } from '../api/teaching';
+import type {
+  ContentCategory,
+  ContentComment,
+  LearningStatsResponse,
+  StudentLearningRecord,
+  StudentProgress,
+  TeachingContentCreatePayload,
+  TeachingContentDetail,
+  TeachingContentListItem,
+} from '../api/teaching';
 import NotificationBell from '../components/NotificationBell.vue';
 
 const router = useRouter();
 const route = useRoute();
-const userRole = ref(localStorage.getItem('role') || 'student');
+const userRole = ref(getUserRole() || 'student');
 
 // Markdown 渲染
 const md = new MarkdownIt({
@@ -494,7 +582,7 @@ const userRoleText = computed(() => {
 });
 
 // 分类相关
-const categories = ref<any[]>([]);
+const categories = ref<ContentCategory[]>([]);
 const activeCategoryId = ref(0);
 const showCategoryDialog = ref(false);
 const categoryForm = ref({
@@ -504,10 +592,10 @@ const categoryForm = ref({
 });
 
 // 内容相关
-const contents = ref<any[]>([]);
+const contents = ref<TeachingContentListItem[]>([]);
 const showContentEditor = ref(false);
-const editingContent = ref<any>(null);
-const contentForm = ref({
+const editingContent = ref<TeachingContentListItem | null>(null);
+const defaultContentForm = (): TeachingContentCreatePayload => ({
   title: '',
   category_id: 0,
   content_type: 'article',
@@ -516,19 +604,27 @@ const contentForm = ref({
   cover_image: '',
   is_published: false
 });
+const contentForm = ref<TeachingContentCreatePayload>(defaultContentForm());
+const contentEditorRef = ref<any>(null);
+const mdEditorTab = ref<'edit' | 'preview'>('edit');
+
+const TEACHING_INSERT_AVAILABILITY_EVENT = 'ai-teaching-insert-availability';
+const TEACHING_INSERT_CONTENT_EVENT = 'ai-teaching-insert-content';
+
+type MarkdownAction = 'h1' | 'h2' | 'h3' | 'bold' | 'ul' | 'ol' | 'quote';
 
 // 内容详情
 const showContentDetail = ref(false);
-const currentContent = ref<any>(null);
+const currentContent = ref<TeachingContentDetail | null>(null);
 const currentContentId = ref<number | null>(null);
-const comments = ref<any[]>([]);
+const comments = ref<ContentComment[]>([]);
 const newComment = ref('');
 const replyingCommentId = ref<number | null>(null);
 const replyText = ref('');
-const learningRecord = ref<any>(null);
+const learningRecord = ref<StudentLearningRecord | null>(null);
 
 // 学习记录
-const learningRecords = ref<any[]>([]);
+const learningRecords = ref<StudentLearningRecord[]>([]);
 const learningProgressMap = computed(() => {
   const map = new Map<number, number>();
   for (const record of learningRecords.value) {
@@ -543,7 +639,7 @@ const searchType = ref('');
 
 // 统计相关（教师端）
 const showStatsDialog = ref(false);
-const stats = ref<any>({
+const stats = ref<LearningStatsResponse>({
   total_students: 0,
   total_contents: 0,
   total_learning_records: 0,
@@ -553,7 +649,7 @@ const stats = ref<any>({
   completion_rate: 0,
   average_progress: 0
 });
-const studentsProgress = ref<any[]>([]);
+const studentsProgress = ref<StudentProgress[]>([]);
 
 const progressDistribution = computed(() => {
   const total = stats.value.total_learning_records || (
@@ -577,8 +673,13 @@ const loadStats = async () => {
     stats.value = await getLearningStats();
     studentsProgress.value = await getStudentsProgress();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '学习统计加载失败');
+    ElMessage.error(getErrorMessage(error, '学习统计加载失败'));
   }
+};
+
+const openStatsDialog = () => {
+  showStatsDialog.value = true;
+  loadStats();
 };
 
 // 加载数据
@@ -586,7 +687,7 @@ const loadCategories = async () => {
   try {
     categories.value = await getCategories();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载分类失败');
+    ElMessage.error(getErrorMessage(error, '加载分类失败'));
   }
 };
 
@@ -599,7 +700,7 @@ const loadContents = async () => {
     const response = await getContents(params);
     contents.value = Array.isArray(response) ? response : (response?.items || []);
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载内容失败');
+    ElMessage.error(getErrorMessage(error, '加载内容失败'));
   }
 };
 
@@ -608,7 +709,7 @@ const loadLearningRecords = async () => {
     try {
       learningRecords.value = await getMyLearning();
     } catch (error: any) {
-      ElMessage.error(error.response?.data?.detail || '加载学习记录失败');
+      ElMessage.error(getErrorMessage(error, '加载学习记录失败'));
     }
   }
 };
@@ -653,13 +754,14 @@ const submitCategory = async () => {
     loadCategories();
     categoryForm.value = { name: '', description: '', parent_id: undefined };
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '创建失败');
+    ElMessage.error(getErrorMessage(error, '创建失败'));
   }
 };
 
 // 内容管理
-const editContent = (content: any) => {
+const editContent = (content: TeachingContentListItem) => {
   editingContent.value = content;
+  mdEditorTab.value = 'edit';
   contentForm.value = {
     title: content.title,
     category_id: content.category_id,
@@ -670,6 +772,164 @@ const editContent = (content: any) => {
     is_published: content.is_published
   };
   showContentEditor.value = true;
+};
+
+const resetContentEditor = () => {
+  editingContent.value = null;
+  mdEditorTab.value = 'edit';
+  contentForm.value = defaultContentForm();
+};
+
+const openCreateContentEditor = () => {
+  resetContentEditor();
+  showContentEditor.value = true;
+};
+
+const updateTeachingInsertAvailability = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const enabled = canManage.value && showContentEditor.value && contentForm.value.content_type === 'article';
+  window.dispatchEvent(new CustomEvent(TEACHING_INSERT_AVAILABILITY_EVENT, {
+    detail: { enabled },
+  }));
+};
+
+const looksLikeMarkdown = (text: string) => {
+  return /(^\s{0,3}#{1,6}\s)|(^\s*[-*+]\s)|(^\s*\d+\.\s)|(```)|(^\s*>\s)|\*\*.+\*\*/m.test(text);
+};
+
+const normalizeAssistantInsertToMarkdown = (raw: string) => {
+  const text = (raw || '').trim().replace(/\r\n/g, '\n');
+  if (!text) {
+    return '';
+  }
+
+  if (looksLikeMarkdown(text)) {
+    return text;
+  }
+
+  const sectionPattern = /^(学习目标|导入问题|课堂小结|课后思考|结论|依据|建议|注意事项|步骤|提问|总结)[：:]\s*(.*)$/;
+  const normalizedLines: string[] = [];
+
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const sectionMatch = line.match(sectionPattern);
+    if (sectionMatch) {
+      normalizedLines.push(`## ${sectionMatch[1]}`);
+      if (sectionMatch[2]) {
+        normalizedLines.push(sectionMatch[2]);
+      }
+      normalizedLines.push('');
+      continue;
+    }
+
+    const listNumberMatch = line.match(/^\d+[\.、]\s*(.+)$/);
+    if (listNumberMatch) {
+      normalizedLines.push(`1. ${listNumberMatch[1]}`);
+      continue;
+    }
+
+    const listBulletMatch = line.match(/^[-*•]\s*(.+)$/);
+    if (listBulletMatch) {
+      normalizedLines.push(`- ${listBulletMatch[1]}`);
+      continue;
+    }
+
+    normalizedLines.push(line);
+    normalizedLines.push('');
+  }
+
+  return normalizedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+};
+
+const insertAtCursor = (prefix: string, suffix = '', placeholder = '内容') => {
+  const editor = contentEditorRef.value;
+  const textarea = editor?.textarea as HTMLTextAreaElement | undefined;
+  const original = contentForm.value.content || '';
+
+  if (!textarea) {
+    contentForm.value.content = `${original}${prefix}${placeholder}${suffix}`;
+    return;
+  }
+
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const selected = original.slice(start, end) || placeholder;
+  const inserted = `${prefix}${selected}${suffix}`;
+
+  contentForm.value.content = `${original.slice(0, start)}${inserted}${original.slice(end)}`;
+
+  nextTick(() => {
+    textarea.focus();
+    const caret = start + inserted.length;
+    textarea.setSelectionRange(caret, caret);
+  });
+};
+
+const insertMarkdownBlock = (block: string) => {
+  const original = contentForm.value.content || '';
+  const spacer = original.trim() ? '\n\n' : '';
+  contentForm.value.content = `${original}${spacer}${block}`;
+  nextTick(() => {
+    const textarea = contentEditorRef.value?.textarea as HTMLTextAreaElement | undefined;
+    textarea?.focus();
+  });
+};
+
+const applyMarkdownFormat = (action: MarkdownAction) => {
+  if (contentForm.value.content_type !== 'article') {
+    return;
+  }
+
+  if (action === 'h1') {
+    insertMarkdownBlock('# 标题');
+    return;
+  }
+  if (action === 'h2') {
+    insertMarkdownBlock('## 二级标题');
+    return;
+  }
+  if (action === 'h3') {
+    insertMarkdownBlock('### 三级标题');
+    return;
+  }
+  if (action === 'bold') {
+    insertAtCursor('**', '**', '重点内容');
+    return;
+  }
+  if (action === 'ul') {
+    insertMarkdownBlock('- 要点一\n- 要点二');
+    return;
+  }
+  if (action === 'ol') {
+    insertMarkdownBlock('1. 步骤一\n2. 步骤二');
+    return;
+  }
+  if (action === 'quote') {
+    insertMarkdownBlock('> 课堂提示：在此输入引用说明');
+  }
+};
+
+const handleAssistantInsert = (event: Event) => {
+  const detail = (event as CustomEvent<{ content?: string }>).detail;
+  const incoming = (detail?.content || '').trim();
+  if (!incoming) {
+    return;
+  }
+
+  if (!showContentEditor.value || contentForm.value.content_type !== 'article') {
+    ElMessage.warning('请先打开教学内容中的文章编辑器，再执行插入');
+    return;
+  }
+
+  const markdownContent = normalizeAssistantInsertToMarkdown(incoming);
+  const previous = (contentForm.value.content || '').trim();
+  contentForm.value.content = previous ? `${previous}\n\n${markdownContent}` : markdownContent;
+  ElMessage.success('已插入 AI 生成内容（Markdown）');
 };
 
 const submitContent = async () => {
@@ -687,28 +947,47 @@ const submitContent = async () => {
     }
     showContentEditor.value = false;
     loadContents();
-    editingContent.value = null;
-    contentForm.value = {
-      title: '',
-      category_id: 0,
-      content_type: 'article',
-      content: '',
-      video_url: '',
-      cover_image: '',
-      is_published: false
-    };
+    resetContentEditor();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '操作失败');
+    ElMessage.error(getErrorMessage(error, '操作失败'));
   }
 };
 
-const togglePublish = async (content: any) => {
+const hasContentPermission = (
+  content: TeachingContentListItem | TeachingContentDetail | null,
+  permissionKey: 'can_edit' | 'can_delete' | 'can_publish'
+) => {
+  if (!content || !canManage.value) {
+    return false;
+  }
+  if (typeof content[permissionKey] === 'boolean') {
+    return content[permissionKey];
+  }
+  return userRole.value === 'admin';
+};
+
+const canEditContent = (content: TeachingContentListItem | TeachingContentDetail | null) => hasContentPermission(content, 'can_edit');
+const canDeleteContent = (content: TeachingContentListItem | TeachingContentDetail | null) => hasContentPermission(content, 'can_delete');
+const canPublishContent = (content: TeachingContentListItem | TeachingContentDetail | null) => hasContentPermission(content, 'can_publish');
+const canManageCard = (content: TeachingContentListItem | TeachingContentDetail | null) =>
+  canEditContent(content) || canDeleteContent(content) || canPublishContent(content);
+
+const editCurrentContent = () => {
+  if (!currentContent.value) return;
+  showContentDetail.value = false;
+  editContent(currentContent.value);
+};
+
+const togglePublish = async (content: TeachingContentListItem | TeachingContentDetail) => {
   try {
-    await publishContent(content.id);
-    ElMessage.success('操作成功');
-    loadContents();
+    const result = await publishContent(content.id);
+    ElMessage.success(result?.message || (content.is_published ? '已取消发布' : '已发布'));
+    await loadContents();
+    if (currentContentId.value === content.id && showContentDetail.value) {
+      await loadContentDetail();
+    }
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '操作失败');
+    ElMessage.error(getErrorMessage(error, '操作失败'));
   }
 };
 
@@ -722,7 +1001,7 @@ const deleteContentItem = async (id: number) => {
     loadContents();
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error(error.response?.data?.detail || '删除失败');
+      ElMessage.error(getErrorMessage(error, '删除失败'));
     }
   }
 };
@@ -744,9 +1023,9 @@ const loadContentDetail = async () => {
     
     // 加载学习记录
     const records = await getMyLearning();
-    learningRecord.value = records.find(r => r.content_id === currentContentId.value);
+    learningRecord.value = records.find(r => r.content_id === currentContentId.value) || null;
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载失败');
+    ElMessage.error(getErrorMessage(error, '加载失败'));
   }
 };
 
@@ -754,11 +1033,13 @@ const markAsComplete = async () => {
   if (!currentContentId.value) return;
   try {
     await completeLearning(currentContentId.value);
-    learningRecord.value = { ...learningRecord.value, status: 'completed', progress_percent: 100 };
+    if (learningRecord.value) {
+      learningRecord.value = { ...learningRecord.value, status: 'completed', progress_percent: 100 };
+    }
     ElMessage.success('已标记为完成');
     loadLearningRecords();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '操作失败');
+    ElMessage.error(getErrorMessage(error, '操作失败'));
   }
 };
 
@@ -774,7 +1055,7 @@ const submitComment = async () => {
     newComment.value = '';
     await loadComments();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '评论失败');
+    ElMessage.error(getErrorMessage(error, '评论失败'));
   }
 };
 
@@ -804,17 +1085,17 @@ const submitReply = async (commentId: number) => {
     cancelReply();
     await loadComments();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '回复失败');
+    ElMessage.error(getErrorMessage(error, '回复失败'));
   }
 };
 
-const toggleLike = async (comment: any) => {
+const toggleLike = async (comment: ContentComment) => {
   try {
     const result = await toggleCommentLike(comment.id);
     comment.liked = result.liked;
     comment.like_count = result.like_count;
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '点赞操作失败');
+    ElMessage.error(getErrorMessage(error, '点赞操作失败'));
   }
 };
 
@@ -830,11 +1111,11 @@ const formatDuration = (seconds: number): string => {
 };
 
 const getContentTitle = (contentId: number) => {
-  const content = contents.value.find(c => c.id === contentId);
+  const content = contents.value.find((c) => c.id === contentId);
   return content?.title || `内容 #${contentId}`;
 };
 
-const stripText = (value?: string) => {
+const stripText = (value?: string | null) => {
   if (!value) return '';
   return value
     .replace(/<[^>]*>/g, ' ')
@@ -844,7 +1125,7 @@ const stripText = (value?: string) => {
     .trim();
 };
 
-const getContentSummary = (content: any) => {
+const getContentSummary = (content: TeachingContentListItem | TeachingContentDetail) => {
   if (content.content_type === 'video') {
     return stripText(content.content) || '点击进入视频学习，边看边思考科学问题。';
   }
@@ -860,7 +1141,7 @@ const getContentSummary = (content: any) => {
   return '点击查看完整教学内容。';
 };
 
-const estimateDurationText = (content: any) => {
+const estimateDurationText = (content: TeachingContentListItem | TeachingContentDetail) => {
   if (content.content_type === 'video') return '约 8 分钟';
   const plain = stripText(content.content);
   const minutes = Math.max(1, Math.ceil(plain.length / 220));
@@ -876,7 +1157,7 @@ const getProgressBlocks = (percent: number) => {
   return `${'▓'.repeat(filled)}${'░'.repeat(5 - filled)}`;
 };
 
-const formatContent = (content?: string) => {
+const formatContent = (content?: string | null) => {
   if (!content) return '<p>暂无内容</p>';
   // 使用 Markdown 渲染
   return md.render(content);
@@ -901,16 +1182,21 @@ const formatDate = (dateStr: string) => {
   return new Date(dateStr).toLocaleString('zh-CN');
 };
 
-const resolveAssetUrl = (url?: string) => {
-  if (!url) return '';
-  if (/^https?:\/\//i.test(url)) return url;
-  return `http://localhost:8000${url}`;
+const formatDateOrDash = (dateStr?: string | null) => {
+  if (!dateStr) return '未发布';
+  return formatDate(dateStr);
+};
+
+const getPublisherName = (content: TeachingContentListItem | TeachingContentDetail | null | undefined) => {
+  return content?.publisher_name || content?.author_name || content?.author_username || '未知';
+};
+
+const resolveAssetUrl = (url?: string | null) => {
+  return resolveBackendAssetUrl(url || undefined);
 };
 
 const handleLogout = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-  localStorage.removeItem('username');
+  clearAuthSession();
   router.push('/login');
 };
 
@@ -918,8 +1204,26 @@ onMounted(() => {
   loadCategories();
   loadContents();
   loadLearningRecords();
-  loadStats();
+  window.addEventListener(TEACHING_INSERT_CONTENT_EVENT, handleAssistantInsert as EventListener);
+  updateTeachingInsertAvailability();
 });
+
+onUnmounted(() => {
+  window.removeEventListener(TEACHING_INSERT_CONTENT_EVENT, handleAssistantInsert as EventListener);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(TEACHING_INSERT_AVAILABILITY_EVENT, {
+      detail: { enabled: false },
+    }));
+  }
+});
+
+watch(
+  [showContentEditor, () => contentForm.value.content_type, canManage],
+  () => {
+    updateTeachingInsertAvailability();
+  },
+  { immediate: true }
+);
 
 watch(
   () => route.query.content_id,
@@ -936,7 +1240,9 @@ watch(
 <style scoped>
 .teaching-container {
   min-height: 100vh;
-  background-color: #f5f7fa;
+  background:
+    radial-gradient(circle at 8% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
 }
 
 .header {
@@ -944,8 +1250,9 @@ watch(
   justify-content: space-between;
   align-items: center;
   padding: 20px;
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: var(--glass-bg-strong);
+  border-bottom: 1px solid var(--el-border-color-light);
+  box-shadow: var(--shadow-soft);
 }
 
 .header-left {
@@ -984,11 +1291,11 @@ watch(
 .learning-item {
   cursor: pointer;
   padding: 8px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .learning-item:hover {
-  background-color: #f5f5f5;
+  background-color: var(--el-fill-color-light);
 }
 
 .learning-title {
@@ -1008,6 +1315,118 @@ watch(
   margin-bottom: 20px;
 }
 
+.md-editor-shell {
+  width: 100%;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 12px;
+  background: var(--glass-bg);
+  padding: 10px;
+}
+
+.md-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.md-editor-tabs {
+  margin-top: 2px;
+}
+
+.md-editor-tabs :deep(.el-tabs__header) {
+  margin-bottom: 8px;
+}
+
+.md-editor-tabs :deep(.el-tabs__item) {
+  font-size: 13px;
+}
+
+.md-pane {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  background: var(--bg-card);
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+}
+
+.md-pane-title {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--el-border-color-light);
+}
+
+.md-pane-editor {
+  overflow: hidden;
+}
+
+.md-input {
+  flex: 1;
+}
+
+.md-input :deep(.el-textarea),
+.md-input :deep(.el-textarea__inner) {
+  height: 100%;
+  min-height: 320px;
+}
+
+.md-input :deep(.el-textarea__inner) {
+  border: none;
+  box-shadow: none;
+  border-radius: 0 0 10px 10px;
+  resize: vertical;
+  line-height: 1.7;
+}
+
+.md-pane-preview {
+  overflow: hidden;
+}
+
+.md-preview-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  line-height: 1.75;
+  color: var(--text-secondary);
+}
+
+.md-preview-body :deep(h1),
+.md-preview-body :deep(h2),
+.md-preview-body :deep(h3),
+.md-preview-body :deep(h4) {
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.md-preview-body :deep(p) {
+  margin: 0 0 10px;
+}
+
+.md-preview-body :deep(ul),
+.md-preview-body :deep(ol) {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.md-preview-body :deep(blockquote) {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
+}
+
+.ai-polish-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
 
 .content-waterfall {
   margin-top: 16px;
@@ -1021,20 +1440,21 @@ watch(
   position: relative;
   cursor: pointer;
   border-radius: 16px;
-  border: 1px solid rgba(58, 137, 91, 0.16);
+  border: 1px solid var(--el-border-color-light);
+  background: var(--bg-card);
   overflow: hidden;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .content-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 16px 30px rgba(21, 65, 42, 0.16);
+  box-shadow: var(--shadow-soft-hover);
 }
 
 .card-cover {
   position: relative;
   height: 160px;
-  background: #eef5f0;
+  background: var(--el-fill-color-light);
   overflow: hidden;
 }
 
@@ -1045,11 +1465,11 @@ watch(
 }
 
 .card-cover.type-video {
-  background: linear-gradient(145deg, #0d2f44 0%, #1e6b8d 100%);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--color-plant-700) 70%, #0f2033) 0%, color-mix(in srgb, var(--color-plant-500) 65%, #246685) 100%);
 }
 
 .card-cover.type-article {
-  background: linear-gradient(140deg, #d9f3e2 0%, #bbdfca 100%);
+  background: linear-gradient(140deg, color-mix(in srgb, var(--color-plant-500) 18%, var(--bg-card)) 0%, color-mix(in srgb, var(--color-plant-600) 26%, var(--bg-card)) 100%);
 }
 
 .article-cover-default,
@@ -1060,7 +1480,7 @@ watch(
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #214f35;
+  color: var(--text-main);
   font-weight: 700;
 }
 
@@ -1069,7 +1489,7 @@ watch(
 }
 
 .generic-cover {
-  color: #4d6659;
+  color: var(--text-secondary);
 }
 
 .play-overlay {
@@ -1077,7 +1497,7 @@ watch(
   inset: 0;
   display: grid;
   place-items: center;
-  color: #ffffff;
+  color: var(--el-color-white);
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.28));
 }
 
@@ -1114,12 +1534,21 @@ watch(
 
 .content-summary {
   margin: 8px 0 0;
-  color: #60776b;
+  color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.content-meta-line {
+  margin: 8px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .card-footer {
@@ -1138,7 +1567,7 @@ watch(
 
 .duration {
   font-size: 12px;
-  color: #6f8578;
+  color: var(--text-tertiary);
 }
 
 .progress-inline {
@@ -1150,12 +1579,12 @@ watch(
 .progress-blocks {
   font-size: 11px;
   letter-spacing: 1px;
-  color: #2d7a4d;
+  color: var(--el-color-primary);
 }
 
 .progress-text {
   font-size: 12px;
-  color: #4f6b5c;
+  color: var(--text-secondary);
 }
 
 .stats-grid {
@@ -1168,7 +1597,7 @@ watch(
 }
 
 .stat-label {
-  color: #666;
+  color: var(--text-tertiary);
   font-size: 14px;
   margin-bottom: 10px;
 }
@@ -1176,7 +1605,7 @@ watch(
 .stat-value {
   font-size: 32px;
   font-weight: bold;
-  color: #409EFF;
+  color: var(--el-color-primary);
 }
 
 .search-bar {
@@ -1187,7 +1616,8 @@ watch(
   margin-bottom: 20px;
   padding: 12px;
   border-radius: 16px;
-  border: 1px solid rgba(58, 137, 91, 0.14);
+  border: 1px solid var(--el-border-color-light);
+  background: var(--glass-bg);
 }
 
 .search-input {
@@ -1207,7 +1637,7 @@ watch(
 .empty-content-state {
   margin-top: 18px;
   border-radius: 18px;
-  border: 1px dashed rgba(45, 122, 77, 0.35);
+  border: 1px dashed var(--el-border-color);
   min-height: 260px;
   display: flex;
   flex-direction: column;
@@ -1224,12 +1654,12 @@ watch(
 
 .empty-content-state h3 {
   margin: 0;
-  color: #2b5840;
+  color: var(--text-main);
 }
 
 .empty-content-state p {
   margin: 0;
-  color: #638073;
+  color: var(--text-secondary);
 }
 
 .content-detail {
@@ -1243,12 +1673,19 @@ watch(
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .meta-text {
-  color: #666;
+  color: var(--text-tertiary);
   font-size: 14px;
+}
+
+.detail-manager-actions {
+  margin: -6px 0 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .video-container {
@@ -1273,19 +1710,19 @@ watch(
   margin-bottom: 16px;
   font-weight: 600;
   line-height: 1.25;
-  color: #333;
+  color: var(--text-main);
 }
 
 .article-content :deep(h1) {
   font-size: 24px;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .article-content :deep(h2) {
   font-size: 20px;
   padding-bottom: 0.25em;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .article-content :deep(h3) {
@@ -1322,24 +1759,24 @@ watch(
 .article-content :deep(th),
 .article-content :deep(td) {
   padding: 8px 12px;
-  border: 1px solid #ddd;
+  border: 1px solid var(--el-border-color);
   text-align: left;
 }
 
 .article-content :deep(th) {
-  background-color: #f6f8fa;
+  background-color: var(--el-fill-color-light);
   font-weight: 600;
 }
 
 .article-content :deep(tr:nth-child(2n)) {
-  background-color: #f8f9fa;
+  background-color: color-mix(in srgb, var(--el-fill-color-light) 56%, transparent);
 }
 
 .article-content :deep(code) {
   padding: 0.2em 0.4em;
   margin: 0;
   font-size: 85%;
-  background-color: rgba(27,31,35,0.05);
+  background-color: color-mix(in srgb, var(--el-fill-color-light) 74%, transparent);
   border-radius: 3px;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
@@ -1349,7 +1786,7 @@ watch(
   overflow: auto;
   font-size: 85%;
   line-height: 1.45;
-  background-color: #f6f8fa;
+  background-color: var(--el-fill-color-light);
   border-radius: 3px;
 }
 
@@ -1366,8 +1803,8 @@ watch(
 
 .article-content :deep(blockquote) {
   padding: 0 1em;
-  color: #6a737d;
-  border-left: 0.25em solid #dfe2e5;
+  color: var(--text-secondary);
+  border-left: 0.25em solid var(--el-border-color);
   margin: 16px 0;
 }
 
@@ -1383,7 +1820,7 @@ watch(
   height: 0.25em;
   padding: 0;
   margin: 24px 0;
-  background-color: #e1e4e8;
+  background-color: var(--el-border-color-light);
   border: 0;
 }
 
@@ -1394,14 +1831,14 @@ watch(
 .learning-progress {
   margin: 20px 0;
   padding: 20px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
 }
 
 .comments-section {
   margin-top: 30px;
   padding-top: 20px;
-  border-top: 2px solid #eee;
+  border-top: 2px solid var(--el-border-color-light);
 }
 
 .comments-section h4 {
@@ -1420,7 +1857,7 @@ watch(
 
 .comment-item {
   padding: 15px;
-  background: #f9f9f9;
+  background: color-mix(in srgb, var(--el-fill-color-light) 42%, transparent);
   border-radius: 8px;
 }
 
@@ -1438,7 +1875,7 @@ watch(
 }
 
 .comment-time {
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 
@@ -1468,15 +1905,15 @@ watch(
 .reply-list {
   margin-top: 10px;
   padding-left: 12px;
-  border-left: 2px solid #e4e7ed;
+  border-left: 2px solid var(--el-border-color-light);
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
 .reply-item {
-  background: #ffffff;
-  border: 1px solid #ebeef5;
+  background: var(--bg-card);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 6px;
   padding: 10px;
 }
@@ -1484,7 +1921,7 @@ watch(
 .teacher-reply {
   margin-top: 10px;
   padding: 10px;
-  background: #e8f5e9;
+  background: color-mix(in srgb, var(--el-color-success) 16%, transparent);
   border-radius: 4px;
 }
 

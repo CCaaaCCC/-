@@ -70,6 +70,7 @@
             <p class="plant-species">{{ plant.species || '未指定品种' }}</p>
             <div class="plant-meta">
               <span>📊 {{ plant.growth_record_count }} 条记录</span>
+              <span v-if="isTeacher && !plant.can_manage" class="readonly-tip">只读</span>
               <span :class="['status-tag', plant.status]">
                 {{ getStatusText(plant.status) }}
               </span>
@@ -318,7 +319,7 @@ import { Plus, Filter, Picture } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import type { FormInstance, UploadRequestOptions } from 'element-plus';
 import StatusPanel from '../components/StatusPanel.vue';
-import apiClient from '../api';
+import { resolveBackendAssetUrl } from '../api';
 import {
   uploadPlantImage,
   getPlants,
@@ -330,6 +331,7 @@ import { getClasses } from '../api/classes';
 import { getDevices } from '../api/devices';
 import { useCurrentUser } from '../composables/useCurrentUser';
 import AppTopBar from '../components/AppTopBar.vue';
+import { getErrorMessage } from '../utils/error';
 
 const router = useRouter();
 const { role: userRole, isTeacher, ensureLoaded } = useCurrentUser();
@@ -411,7 +413,7 @@ const loadClasses = async () => {
   try {
     classes.value = await getClasses({ is_active: true });
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载班级失败');
+    ElMessage.error(getErrorMessage(error, '加载班级失败'));
   }
 };
 
@@ -419,7 +421,7 @@ const loadDevices = async () => {
   try {
     devices.value = await getDevices();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载设备失败');
+    ElMessage.error(getErrorMessage(error, '加载设备失败'));
   }
 };
 
@@ -437,7 +439,7 @@ const loadPlants = async (showError = true): Promise<boolean> => {
   } catch (error: any) {
     if (showError) {
       const status = error.response?.status;
-      const detail = error.response?.data?.detail || '加载失败';
+      const detail = getErrorMessage(error, '加载失败');
       if (status === 401) {
         pageErrorDetail.value = '未登录或登录已过期，请重新登录。';
         pageErrorActionText.value = '去登录';
@@ -468,7 +470,7 @@ const viewPlant = async (plant: any) => {
     records.value = await getPlantRecords(plant.id);
   } catch (error) {
     const status = (error as any)?.response?.status;
-    const detail = (error as any)?.response?.data?.detail || '加载记录失败';
+    const detail = getErrorMessage(error, '加载记录失败');
     if (status === 401) {
       recordErrorDetail.value = '未登录或登录已过期，请重新登录。';
       recordErrorActionText.value = '去登录';
@@ -512,7 +514,7 @@ const submitPlant = async () => {
       description: ''
     };
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '创建失败');
+    ElMessage.error(getErrorMessage(error, '创建失败'));
   } finally {
     submitting.value = false;
   }
@@ -528,7 +530,7 @@ const handleCoverUpload = async (options: UploadRequestOptions) => {
     ElMessage.success('封面上传成功');
   } catch (error: any) {
     options.onError?.(error);
-    ElMessage.error(error.response?.data?.detail || '封面上传失败');
+    ElMessage.error(getErrorMessage(error, '封面上传失败'));
   } finally {
     uploadingCover.value = false;
   }
@@ -536,9 +538,7 @@ const handleCoverUpload = async (options: UploadRequestOptions) => {
 
 const resolveImageUrl = (url?: string) => {
   if (!url) return '';
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  const base = (apiClient.defaults.baseURL || '').replace(/\/api\/?$/, '');
-  return `${base}${url}`;
+  return resolveBackendAssetUrl(url);
 };
 
 // 添加生长记录
@@ -561,7 +561,7 @@ const submitRecord = async () => {
       description: ''
     };
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '添加失败');
+    ElMessage.error(getErrorMessage(error, '添加失败'));
   } finally {
     submitting.value = false;
   }
@@ -616,7 +616,9 @@ onMounted(async () => {
 <style scoped>
 .plants-page {
   min-height: 100vh;
-  background-color: #f0f2f5;
+  background:
+    radial-gradient(circle at 6% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
 }
 
 .header {
@@ -624,8 +626,8 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   padding: 15px 24px;
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: var(--glass-bg-strong);
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .header-left {
@@ -643,7 +645,7 @@ onMounted(async () => {
   display: flex;
   padding: 20px;
   gap: 20px;
-  max-width: 1400px;
+  max-width: var(--layout-wide-max-width);
   margin: 0 auto;
 }
 
@@ -654,6 +656,7 @@ onMounted(async () => {
 
 .filter-card {
   border-radius: 8px;
+  border: 1px solid var(--el-border-color-light);
 }
 
 .card-header {
@@ -661,6 +664,7 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   font-weight: 500;
+  color: var(--text-main);
 }
 
 .content-area {
@@ -686,7 +690,7 @@ onMounted(async () => {
 
 .plant-image {
   height: 150px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--color-plant-500) 0%, var(--color-sun-500) 100%);
   border-radius: 8px 8px 0 0;
   margin: -16px -16px 0 -16px;
   display: flex;
@@ -714,19 +718,19 @@ onMounted(async () => {
   height: 90px;
   border-radius: 6px;
   object-fit: cover;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color-light);
 }
 
 .plant-name {
   margin: 12px 0 4px;
   font-size: 16px;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .plant-species {
   margin: 0 0 12px;
   font-size: 13px;
-  color: #909399;
+  color: var(--text-tertiary);
 }
 
 .plant-meta {
@@ -734,7 +738,15 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   font-size: 13px;
-  color: #909399;
+  color: var(--text-tertiary);
+}
+
+.readonly-tip {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--el-fill-color-light);
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 
 .status-tag {
@@ -744,18 +756,18 @@ onMounted(async () => {
 }
 
 .status-tag.growing {
-  background: #f0f9ff;
-  color: #409EFF;
+  background: color-mix(in srgb, var(--el-color-primary) 14%, transparent);
+  color: var(--el-color-primary);
 }
 
 .status-tag.harvested {
-  background: #f0fff9;
-  color: #67C23A;
+  background: color-mix(in srgb, var(--el-color-success) 14%, transparent);
+  color: var(--el-color-success);
 }
 
 .status-tag.withered {
-  background: #fef0f0;
-  color: #F56C6C;
+  background: color-mix(in srgb, var(--el-color-danger) 14%, transparent);
+  color: var(--el-color-danger);
 }
 
 .plant-detail {
@@ -765,7 +777,7 @@ onMounted(async () => {
 .plant-info {
   text-align: center;
   padding: 20px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
 }
 
@@ -773,7 +785,7 @@ onMounted(async () => {
   width: 120px;
   height: 120px;
   margin: 0 auto 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--color-plant-500) 0%, var(--color-sun-500) 100%);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -795,11 +807,11 @@ onMounted(async () => {
 .plant-info h3 {
   margin: 0 0 8px;
   font-size: 20px;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .species {
-  color: #909399;
+  color: var(--text-tertiary);
   margin: 0 0 16px;
 }
 
@@ -811,7 +823,7 @@ onMounted(async () => {
 .info-list p {
   margin: 8px 0;
   font-size: 14px;
-  color: #606266;
+  color: var(--text-secondary);
 }
 
 .growth-records {
@@ -843,18 +855,18 @@ onMounted(async () => {
   gap: 16px;
   margin-bottom: 8px;
   font-size: 14px;
-  color: #606266;
+  color: var(--text-secondary);
 }
 
 .record-desc {
   margin: 8px 0;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .record-author {
   margin-top: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
   text-align: right;
 }
 </style>

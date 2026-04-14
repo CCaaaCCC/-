@@ -7,5 +7,7 @@ export {
   addGroupMember,
   updateGroupMemberRole,
   removeGroupMember,
+  migrateGroup,
+  batchUpdateGroupMemberRoles,
 } from './index';
 

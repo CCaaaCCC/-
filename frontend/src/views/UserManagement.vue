@@ -1,16 +1,11 @@
 <template>
   <div class="user-management">
-    <!-- 顶部导航栏 -->
-    <div class="header">
-      <div class="header-left">
-        <h2 class="page-title">👤 用户管理</h2>
-        <el-tag :type="roleTagType" size="large">{{ userRoleText }}</el-tag>
-      </div>
-      <div class="header-right">
-        <el-button @click="$router.push('/')">🏠 返回工作台</el-button>
-        <el-button type="danger" plain @click="handleLogout">退出登录</el-button>
-      </div>
-    </div>
+    <AppTopBar
+      title="👤 用户管理"
+      :roleTagType="roleTagType"
+      :roleText="userRoleText"
+      subtitle="支持批量导入、班级分配、账号状态治理与导出归档"
+    />
 
     <!-- 主内容区 -->
     <div class="main-container">
@@ -76,7 +71,7 @@
                 <el-option label="禁用" :value="false" />
               </el-select>
             </el-form-item>
-            <el-button type="primary" style="width: 100%" @click="loadUsers">
+            <el-button type="primary" style="width: 100%" @click="applyQuery">
               <el-icon><Search /></el-icon> 查询
             </el-button>
             <el-button style="width: 100%; margin-top: 8px" @click="resetFilter">重置</el-button>
@@ -121,14 +116,14 @@
               v-model="searchQuery"
               placeholder="搜索用户名、姓名、学号/工号..."
               clearable
-              @keyup.enter="loadUsers"
+              @keyup.enter="applyQuery"
               style="width: 320px"
             >
               <template #prefix>
                 <el-icon><Search /></el-icon>
               </template>
             </el-input>
-            <el-button type="primary" @click="loadUsers">搜索</el-button>
+            <el-button type="primary" @click="applyQuery">搜索</el-button>
           </div>
           
           <div class="toolbar-actions">
@@ -138,7 +133,7 @@
             <el-button @click="showImportDialog = true">
               <el-icon><Upload /></el-icon> 批量导入
             </el-button>
-            <el-button type="primary" @click="showUserDialog = true; editingUser = null">
+            <el-button type="primary" @click="openCreateUserDialog">
               <el-icon><Plus /></el-icon> 添加用户
             </el-button>
           </div>
@@ -172,11 +167,12 @@
         <!-- 用户表格 -->
         <el-card shadow="never" class="table-card">
           <el-table 
+            ref="userTableRef"
             :data="users" 
             style="width: 100%" 
             v-loading="loading"
             @selection-change="handleSelectionChange"
-            :header-cell-style="{ background: '#f5f7fa', color: '#606266' }"
+            :header-cell-style="tableHeaderStyle"
           >
             <el-table-column type="selection" width="50" align="center" />
             <el-table-column prop="username" label="用户名" width="130" />
@@ -219,8 +215,8 @@
               :page-sizes="[20, 50, 100, 200]"
               layout="total, sizes, prev, pager, next, jumper"
               :total="total"
-              @size-change="loadUsers"
-              @current-change="loadUsers"
+              @size-change="handlePageSizeChange"
+              @current-change="handlePageChange"
             />
           </div>
         </el-card>
@@ -433,14 +429,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, reactive } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, computed, reactive, watch } from 'vue';
 import {
   Search, UploadFilled, Download, Upload, Plus, Delete, Key,
   DataLine, Filter, School, Grid, User as UserIcon, InfoFilled
 } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
+import AppTopBar from '../components/AppTopBar.vue';
 import {
   getUsers,
   createUser,
@@ -459,8 +455,8 @@ import {
   type User,
   type UserCreate
 } from '../api/users';
+import { getErrorMessage } from '../utils/error';
 
-const router = useRouter();
 const userRole = ref(localStorage.getItem('role') || 'admin');
 
 const roleTagType = computed(() => {
@@ -504,6 +500,13 @@ const pagination = ref({
   page_size: 20
 });
 
+const userTableRef = ref<any>(null);
+
+const tableHeaderStyle = {
+  background: 'var(--el-fill-color-light)',
+  color: 'var(--text-secondary)',
+};
+
 // 批量选择
 const selectedUserIds = ref<number[]>([]);
 
@@ -521,7 +524,7 @@ const showUserDialog = ref(false);
 const editingUser = ref<User | null>(null);
 const submitting = ref(false);
 const userFormRef = ref<FormInstance>();
-const userForm = ref<UserCreate>({
+const getDefaultUserForm = (): UserCreate => ({
   username: '',
   password: '',
   role: 'student',
@@ -530,8 +533,14 @@ const userForm = ref<UserCreate>({
   student_id: undefined,
   teacher_id: undefined,
   class_id: undefined,
-  is_active: true
+  is_active: true,
 });
+const userForm = ref<UserCreate>(getDefaultUserForm());
+
+const resetUserForm = () => {
+  userForm.value = getDefaultUserForm();
+  userFormRef.value?.clearValidate();
+};
 
 // 表单验证规则
 const userFormRules = reactive<FormRules>({
@@ -585,7 +594,7 @@ const loadStats = async () => {
   try {
     stats.value = await getUserStats();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载统计失败');
+    ElMessage.error(getErrorMessage(error, '加载统计失败'));
   }
 };
 
@@ -593,7 +602,7 @@ const loadClasses = async () => {
   try {
     classes.value = await getClasses({ is_active: true });
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载班级失败');
+    ElMessage.error(getErrorMessage(error, '加载班级失败'));
   }
 };
 
@@ -608,11 +617,28 @@ const loadUsers = async () => {
     const response = await getUsers(params);
     users.value = response.items || [];
     total.value = response.total || 0;
+    clearSelection();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '加载用户失败');
+    ElMessage.error(getErrorMessage(error, '加载用户失败'));
   } finally {
     loading.value = false;
   }
+};
+
+const applyQuery = () => {
+  pagination.value.page = 1;
+  void loadUsers();
+};
+
+const handlePageSizeChange = (size: number) => {
+  pagination.value.page_size = size;
+  pagination.value.page = 1;
+  void loadUsers();
+};
+
+const handlePageChange = (page: number) => {
+  pagination.value.page = page;
+  void loadUsers();
 };
 
 const resetFilter = () => {
@@ -622,13 +648,14 @@ const resetFilter = () => {
     is_active: undefined
   };
   searchQuery.value = '';
-  loadUsers();
+  activeClassId.value = 0;
+  applyQuery();
 };
 
 const handleClassSelect = (index: string) => {
   activeClassId.value = parseInt(index);
   filterForm.value.class_id = index === '0' ? undefined : parseInt(index);
-  loadUsers();
+  applyQuery();
 };
 
 // 角色标签
@@ -657,6 +684,13 @@ const handleSelectionChange = (selection: any[]) => {
 
 const clearSelection = () => {
   selectedUserIds.value = [];
+  userTableRef.value?.clearSelection?.();
+};
+
+const openCreateUserDialog = () => {
+  editingUser.value = null;
+  resetUserForm();
+  showUserDialog.value = true;
 };
 
 // 用户操作
@@ -676,25 +710,43 @@ const editUser = (user: User) => {
   showUserDialog.value = true;
 };
 
+const buildUserUpdatePayload = () => {
+  const isStudent = userForm.value.role === 'student';
+  const isTeacher = userForm.value.role === 'teacher';
+
+  return {
+    email: userForm.value.email || undefined,
+    real_name: userForm.value.real_name || undefined,
+    student_id: isStudent ? (userForm.value.student_id || undefined) : undefined,
+    teacher_id: isTeacher ? (userForm.value.teacher_id || undefined) : undefined,
+    class_id: isStudent ? (userForm.value.class_id || undefined) : undefined,
+    is_active: userForm.value.is_active,
+  };
+};
+
 const submitUser = async () => {
   if (!userFormRef.value) return;
   
   await userFormRef.value.validate(async (valid) => {
     if (!valid) return;
 
+    submitting.value = true;
     try {
       if (editingUser.value) {
-        await updateUser(editingUser.value.id, userForm.value);
+        await updateUser(editingUser.value.id, buildUserUpdatePayload());
         ElMessage.success('更新成功');
       } else {
         await createUser(userForm.value);
         ElMessage.success('创建成功');
       }
       showUserDialog.value = false;
-      loadUsers();
-      loadStats();
+      resetUserForm();
+      await loadUsers();
+      await loadStats();
     } catch (error: any) {
-      ElMessage.error(error.response?.data?.detail || '操作失败');
+      ElMessage.error(getErrorMessage(error, '操作失败'));
+    } finally {
+      submitting.value = false;
     }
   });
 };
@@ -708,7 +760,7 @@ const confirmDelete = async (id: number) => {
     loadStats();
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error(error.response?.data?.detail || '删除失败');
+      ElMessage.error(getErrorMessage(error, '删除失败'));
     }
   }
 };
@@ -737,7 +789,7 @@ const batchDelete = async () => {
     loadStats();
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error(error.response?.data?.detail || '批量禁用失败');
+      ElMessage.error(getErrorMessage(error, '批量禁用失败'));
     }
   }
 };
@@ -748,7 +800,7 @@ const toggleActive = async (user: User) => {
     ElMessage.success('操作成功');
     loadUsers();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '操作失败');
+    ElMessage.error(getErrorMessage(error, '操作失败'));
   }
 };
 
@@ -770,7 +822,7 @@ const submitResetPassword = async () => {
     ElMessage.success('密码已重置');
     showResetDialog.value = false;
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '操作失败');
+    ElMessage.error(getErrorMessage(error, '操作失败'));
   }
 };
 
@@ -789,7 +841,7 @@ const submitBatchClass = async () => {
     clearSelection();
     loadUsers();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '批量修改失败');
+    ElMessage.error(getErrorMessage(error, '批量修改失败'));
   }
 };
 
@@ -814,7 +866,7 @@ const submitBatchResetPassword = async () => {
     showBatchResetPwd.value = false;
     clearSelection();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '批量重置密码失败');
+    ElMessage.error(getErrorMessage(error, '批量重置密码失败'));
   }
 };
 
@@ -832,7 +884,7 @@ const submitClass = async () => {
     loadClasses();
     classForm.value = { class_name: '', grade: '', description: '' };
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '创建失败');
+    ElMessage.error(getErrorMessage(error, '创建失败'));
   } finally {
     submitting.value = false;
   }
@@ -860,7 +912,7 @@ const submitImport = async () => {
     loadUsers();
     loadStats();
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '导入失败');
+    ElMessage.error(getErrorMessage(error, '导入失败'));
   } finally {
     importing.value = false;
   }
@@ -884,17 +936,10 @@ const handleExportUsers = async () => {
     window.URL.revokeObjectURL(url);
     ElMessage.success('导出成功');
   } catch (error: any) {
-    ElMessage.error('导出失败');
+    ElMessage.error(getErrorMessage(error, '导出失败'));
   } finally {
     exporting.value = false;
   }
-};
-
-const handleLogout = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-  localStorage.removeItem('username');
-  router.push('/login');
 };
 
 onMounted(() => {
@@ -902,59 +947,69 @@ onMounted(() => {
   loadClasses();
   loadUsers();
 });
+
+watch(
+  () => showUserDialog.value,
+  (visible) => {
+    if (!visible) {
+      resetUserForm();
+      editingUser.value = null;
+    }
+  }
+);
+
+watch(
+  () => userForm.value.role,
+  (role) => {
+    if (role === 'student') {
+      userForm.value.teacher_id = undefined;
+      return;
+    }
+    if (role === 'teacher') {
+      userForm.value.student_id = undefined;
+      userForm.value.class_id = undefined;
+      return;
+    }
+    userForm.value.student_id = undefined;
+    userForm.value.teacher_id = undefined;
+    userForm.value.class_id = undefined;
+  }
+);
 </script>
 
 <style scoped>
 .user-management {
   min-height: 100vh;
-  background-color: #f0f2f5;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 15px 24px;
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  position: sticky;
-  top: 0;
-  z-index: 100;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: #303133;
+  background:
+    radial-gradient(circle at 8% 0, var(--layout-glow-left), transparent 28%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-page) 100%);
+  padding-bottom: var(--space-6);
 }
 
 .main-container {
   display: flex;
-  padding: 20px;
+  padding: 0 var(--space-4);
   gap: 20px;
-  max-width: 1600px;
+  max-width: var(--layout-wide-max-width);
   margin: 0 auto;
 }
 
 .sidebar {
   width: 280px;
   flex-shrink: 0;
+  position: sticky;
+  top: var(--space-2);
+  align-self: flex-start;
 }
 
 .sidebar-card {
   border-radius: 8px;
+  border: 1px solid var(--el-border-color-light);
 }
 
 .sidebar-card :deep(.el-card__header) {
-  background: #fafafa;
-  border-bottom: 1px solid #ebeef5;
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-light);
   padding: 14px 16px;
 }
 
@@ -963,7 +1018,7 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   font-weight: 500;
-  color: #303133;
+  color: var(--text-main);
 }
 
 .mt-4 {
@@ -980,13 +1035,13 @@ onMounted(() => {
 .stat-item {
   text-align: center;
   padding: 12px 8px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
   transition: all 0.3s;
 }
 
 .stat-item:hover {
-  background: #ecf5ff;
+  background: color-mix(in srgb, var(--el-fill-color-light) 70%, var(--bg-card));
   transform: translateY(-2px);
 }
 
@@ -995,14 +1050,14 @@ onMounted(() => {
   font-weight: bold;
 }
 
-.stat-value.primary { color: #409EFF; }
-.stat-value.danger { color: #F56C6C; }
-.stat-value.warning { color: #E6A23C; }
-.stat-value.success { color: #67C23A; }
+.stat-value.primary { color: var(--el-color-primary); }
+.stat-value.danger { color: var(--el-color-danger); }
+.stat-value.warning { color: var(--el-color-warning); }
+.stat-value.success { color: var(--el-color-success); }
 
 .stat-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
   margin-top: 4px;
 }
 
@@ -1015,11 +1070,13 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
   margin-bottom: 16px;
   padding: 16px;
-  background: white;
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-soft);
 }
 
 .search-box {
@@ -1051,6 +1108,7 @@ onMounted(() => {
 
 .table-card {
   border-radius: 8px;
+  border: 1px solid var(--el-border-color-light);
 }
 
 .table-card :deep(.el-card__body) {
@@ -1065,9 +1123,9 @@ onMounted(() => {
 
 /* 表格样式优化 */
 :deep(.el-table) {
-  --el-table-header-bg-color: #fafafa;
-  --el-table-header-text-color: #606266;
-  --el-table-row-hover-bg-color: #f5f7fa;
+  --el-table-header-bg-color: var(--el-fill-color-light);
+  --el-table-header-text-color: var(--text-secondary);
+  --el-table-row-hover-bg-color: color-mix(in srgb, var(--el-fill-color-light) 64%, transparent);
 }
 
 :deep(.el-table th) {
@@ -1075,21 +1133,48 @@ onMounted(() => {
 }
 
 :deep(.el-table__row:hover) {
-  background-color: #f5f7fa !important;
+  background-color: color-mix(in srgb, var(--el-fill-color-light) 64%, transparent) !important;
 }
 
 /* 响应式 */
 @media (max-width: 1200px) {
   .main-container {
     flex-direction: column;
+    padding: 0;
   }
   
   .sidebar {
     width: 100%;
+    position: static;
   }
   
   .stats-grid {
     grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .action-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-box {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .search-box :deep(.el-input) {
+    width: 100% !important;
+  }
+
+  .toolbar-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-actions .el-button {
+    flex: 1 1 calc(50% - 6px);
   }
 }
 </style>

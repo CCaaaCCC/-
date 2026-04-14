@@ -45,6 +45,8 @@ class User(Base):
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
     )
 
+    ai_conversations = relationship("AIConversation", back_populates="user", cascade="all, delete-orphan")
+
 
 class Device(Base):
     __tablename__ = "devices"
@@ -344,6 +346,7 @@ class PlantProfile(Base):
     status = Column(String(20), default="growing")  # growing, harvested, dead
     expected_harvest_date = Column(Date, nullable=True)
     description = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     growth_records = relationship("GrowthRecord", back_populates="plant")
@@ -382,6 +385,7 @@ class StudyGroup(Base):
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
     device_id = Column(Integer, ForeignKey("devices.id"))
     description = Column(Text)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     clas = relationship("Class")
@@ -402,4 +406,55 @@ class GroupMember(Base):
 
     group = relationship("StudyGroup", back_populates="members")
     student = relationship("User")
+
+
+class AIConversation(Base):
+    """AI 助手会话表（用户私有）"""
+
+    __tablename__ = "ai_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(120), nullable=False, default="新对话")
+    is_pinned = Column(Boolean, nullable=False, default=False, index=True)
+    pinned_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, index=True)
+    last_message_at = Column(DateTime, nullable=True, index=True)
+
+    user = relationship("User", back_populates="ai_conversations")
+    messages = relationship(
+        "AIConversationMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AIConversationMessage.created_at",
+    )
+
+    __table_args__ = (
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+
+class AIConversationMessage(Base):
+    """AI 助手会话消息表"""
+
+    __tablename__ = "ai_conversation_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("ai_conversations.id"), nullable=False, index=True)
+    role = Column(String(20), nullable=False, index=True)  # user, assistant
+    content = Column(Text, nullable=False)
+    reasoning = Column(Text, nullable=True)
+    source = Column(String(64), nullable=True)
+    model = Column(String(80), nullable=True)
+    citations_json = Column(Text, nullable=True)
+    web_search_notice = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="done")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    conversation = relationship("AIConversation", back_populates="messages")
+
+    __table_args__ = (
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
 

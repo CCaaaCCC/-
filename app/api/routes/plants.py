@@ -7,11 +7,17 @@ from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user, get_db, get_teacher_user
-from app.core.permission import get_allowed_class_ids, get_allowed_group_ids, require_can_access_plant
+from app.core.permission import (
+    can_manage_owned_resource,
+    get_allowed_class_ids,
+    get_allowed_group_ids,
+    require_can_access_plant,
+)
 from app.db.models import Class, Device, GroupMember, GrowthRecord, PlantProfile, StudyGroup, User
 from app.schemas.plants import (
     GrowthRecordCreateRequest,
     GrowthRecordResponse,
+    PlantMigrateRequest,
     PlantProfileCreate,
     PlantProfileResponse,
     PlantProfileUpdate,
@@ -25,6 +31,47 @@ UPLOAD_ROOT = "uploads"
 PLANT_UPLOAD_DIR = os.path.join(UPLOAD_ROOT, "plants")
 
 
+def _build_plant_response(db: Session, plant: PlantProfile, current_user: User) -> PlantProfileResponse:
+    class_name = None
+    device_name = None
+    group_name = None
+
+    if plant.class_id:
+        cls = db.query(Class).filter(Class.id == plant.class_id).first()
+        class_name = cls.class_name if cls else None
+
+    if plant.device_id:
+        device = db.query(Device).filter(Device.id == plant.device_id).first()
+        device_name = device.device_name if device else None
+
+    if plant.group_id:
+        group = db.query(StudyGroup).filter(StudyGroup.id == plant.group_id).first()
+        group_name = group.group_name if group else None
+
+    record_count = db.query(GrowthRecord).filter(GrowthRecord.plant_id == plant.id).count()
+
+    return PlantProfileResponse(
+        id=plant.id,
+        plant_name=plant.plant_name,
+        species=plant.species,
+        class_id=plant.class_id,
+        group_id=plant.group_id,
+        device_id=plant.device_id,
+        plant_date=plant.plant_date,
+        cover_image=plant.cover_image,
+        status=plant.status,
+        expected_harvest_date=plant.expected_harvest_date,
+        description=plant.description,
+        class_name=class_name,
+        device_name=device_name,
+        group_name=group_name,
+        created_by=plant.created_by,
+        can_manage=can_manage_owned_resource(current_user, plant.created_by),
+        growth_record_count=record_count,
+        created_at=plant.created_at,
+    )
+
+
 @router.get("/api/plants", response_model=list[PlantProfileResponse])
 async def get_plants(
     class_id: int | None = None,
@@ -34,9 +81,7 @@ async def get_plants(
 ):
     query = db.query(PlantProfile)
 
-    allowed_class_ids = get_allowed_class_ids(db, current_user)
-
-    if allowed_class_ids is None:
+    if current_user.role in ["admin", "teacher"]:
         if class_id is not None:
             group_ids_for_class = [
                 r[0] for r in db.query(StudyGroup.id).filter(StudyGroup.class_id == class_id).all()
@@ -48,6 +93,7 @@ async def get_plants(
             else:
                 query = query.filter(PlantProfile.class_id == class_id)
     else:
+        allowed_class_ids = get_allowed_class_ids(db, current_user)
         if not allowed_class_ids:
             return []
 
@@ -119,6 +165,8 @@ async def get_plants(
                 status=plant.status,
                 expected_harvest_date=plant.expected_harvest_date,
                 description=plant.description,
+                created_by=plant.created_by,
+                can_manage=can_manage_owned_resource(current_user, plant.created_by),
                 growth_record_count=record_counts.get(plant.id, 0),
                 created_at=plant.created_at,
             )
@@ -137,8 +185,9 @@ async def get_plant(
     if not plant:
         raise HTTPException(status_code=404, detail="植物档案不存在")
 
-    require_can_access_plant(db, current_user, plant)
-    return plant
+    if current_user.role == "student":
+        require_can_access_plant(db, current_user, plant)
+    return _build_plant_response(db, plant, current_user)
 
 
 @router.post("/api/plants/upload-image")
@@ -169,50 +218,11 @@ async def create_plant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_teacher_user),
 ):
-    db_plant = PlantProfile(**plant.model_dump())
+    db_plant = PlantProfile(**plant.model_dump(), created_by=current_user.id)
     db.add(db_plant)
     db.commit()
     db.refresh(db_plant)
-
-    class_name = None
-    device_name = None
-    group_name = None
-
-    if db_plant.class_id:
-        cls = db.query(Class).filter(Class.id == db_plant.class_id).first()
-        if cls:
-            class_name = cls.class_name
-
-    if db_plant.device_id:
-        device = db.query(Device).filter(Device.id == db_plant.device_id).first()
-        if device:
-            device_name = device.device_name
-
-    if db_plant.group_id:
-        group = db.query(StudyGroup).filter(StudyGroup.id == db_plant.group_id).first()
-        if group:
-            group_name = group.group_name
-
-    record_count = db.query(GrowthRecord).filter(GrowthRecord.plant_id == db_plant.id).count()
-
-    return PlantProfileResponse(
-        id=db_plant.id,
-        plant_name=db_plant.plant_name,
-        species=db_plant.species,
-        class_id=db_plant.class_id,
-        group_id=db_plant.group_id,
-        device_id=db_plant.device_id,
-        plant_date=db_plant.plant_date,
-        cover_image=db_plant.cover_image,
-        status=db_plant.status,
-        expected_harvest_date=db_plant.expected_harvest_date,
-        description=db_plant.description,
-        class_name=class_name,
-        device_name=device_name,
-        group_name=group_name,
-        growth_record_count=record_count,
-        created_at=db_plant.created_at,
-    )
+    return _build_plant_response(db, db_plant, current_user)
 
 
 @router.put("/api/plants/{plant_id}", response_model=PlantProfileResponse)
@@ -226,52 +236,16 @@ async def update_plant(
     if not db_plant:
         raise HTTPException(status_code=404, detail="植物档案不存在")
 
+    if not can_manage_owned_resource(current_user, db_plant.created_by):
+        raise HTTPException(status_code=403, detail="仅可修改自己创建的植物档案")
+
     update_data = plant_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_plant, key, value)
 
     db.commit()
     db.refresh(db_plant)
-
-    class_name = None
-    device_name = None
-    group_name = None
-
-    if db_plant.class_id:
-        cls = db.query(Class).filter(Class.id == db_plant.class_id).first()
-        if cls:
-            class_name = cls.class_name
-
-    if db_plant.device_id:
-        device = db.query(Device).filter(Device.id == db_plant.device_id).first()
-        if device:
-            device_name = device.device_name
-
-    if db_plant.group_id:
-        group = db.query(StudyGroup).filter(StudyGroup.id == db_plant.group_id).first()
-        if group:
-            group_name = group.group_name
-
-    record_count = db.query(GrowthRecord).filter(GrowthRecord.plant_id == db_plant.id).count()
-
-    return PlantProfileResponse(
-        id=db_plant.id,
-        plant_name=db_plant.plant_name,
-        species=db_plant.species,
-        class_id=db_plant.class_id,
-        group_id=db_plant.group_id,
-        device_id=db_plant.device_id,
-        plant_date=db_plant.plant_date,
-        cover_image=db_plant.cover_image,
-        status=db_plant.status,
-        expected_harvest_date=db_plant.expected_harvest_date,
-        description=db_plant.description,
-        class_name=class_name,
-        device_name=device_name,
-        group_name=group_name,
-        growth_record_count=record_count,
-        created_at=db_plant.created_at,
-    )
+    return _build_plant_response(db, db_plant, current_user)
 
 
 @router.delete("/api/plants/{plant_id}")
@@ -284,9 +258,52 @@ async def delete_plant(
     if not db_plant:
         raise HTTPException(status_code=404, detail="植物档案不存在")
 
+    if not can_manage_owned_resource(current_user, db_plant.created_by):
+        raise HTTPException(status_code=403, detail="仅可删除自己创建的植物档案")
+
     db.delete(db_plant)
     db.commit()
     return {"message": "植物档案已删除"}
+
+
+@router.post("/api/admin/plants/{plant_id}/migrate", response_model=PlantProfileResponse)
+async def migrate_plant(
+    plant_id: int,
+    payload: PlantMigrateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可执行植物迁移")
+
+    db_plant = db.query(PlantProfile).filter(PlantProfile.id == plant_id).first()
+    if not db_plant:
+        raise HTTPException(status_code=404, detail="植物档案不存在")
+
+    target_class = db.query(Class).filter(Class.id == payload.target_class_id).first()
+    if not target_class:
+        raise HTTPException(status_code=404, detail="目标班级不存在")
+
+    if payload.target_group_id is not None:
+        target_group = db.query(StudyGroup).filter(StudyGroup.id == payload.target_group_id).first()
+        if not target_group:
+            raise HTTPException(status_code=404, detail="目标小组不存在")
+        if target_group.class_id != payload.target_class_id:
+            raise HTTPException(status_code=400, detail="目标小组不属于目标班级")
+
+    if payload.target_device_id is not None:
+        target_device = db.query(Device).filter(Device.id == payload.target_device_id).first()
+        if not target_device:
+            raise HTTPException(status_code=404, detail="目标设备不存在")
+
+    db_plant.class_id = payload.target_class_id
+    db_plant.group_id = payload.target_group_id
+    if payload.target_device_id is not None:
+        db_plant.device_id = payload.target_device_id
+
+    db.commit()
+    db.refresh(db_plant)
+    return _build_plant_response(db, db_plant, current_user)
 
 
 @router.get("/api/plants/{plant_id}/records", response_model=list[GrowthRecordResponse])
@@ -340,6 +357,13 @@ async def delete_plant_record(
     db_record = db.query(GrowthRecord).filter(GrowthRecord.id == record_id).first()
     if not db_record:
         raise HTTPException(status_code=404, detail="记录不存在")
+
+    db_plant = db.query(PlantProfile).filter(PlantProfile.id == db_record.plant_id).first()
+    if not db_plant:
+        raise HTTPException(status_code=404, detail="植物档案不存在")
+
+    if not can_manage_owned_resource(current_user, db_plant.created_by):
+        raise HTTPException(status_code=403, detail="仅可删除自己创建植物的生长记录")
 
     db.delete(db_record)
     db.commit()

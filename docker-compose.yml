@@ -10,8 +10,6 @@ services:
       MYSQL_USER: greenhouse_user
       MYSQL_PASSWORD: greenhouse_password
       MYSQL_ROOT_PASSWORD: root_password
-    ports:
-      - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
 
@@ -23,20 +21,36 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: mysql+pymysql://greenhouse_user:greenhouse_password@db:3306/smart_greenhouse
-      SECRET_KEY: change-this-for-production
-      DEVICE_TOKEN: default_secret_device_token
+      SECRET_KEY: ${SECRET_KEY:-change-this-for-production}
+      DEVICE_TOKEN: ${DEVICE_TOKEN:-default_secret_device_token}
       ACCESS_TOKEN_EXPIRE_MINUTES: 120
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
       SEED_DEMO_DATA: "true"
       DEMO_ADMIN_PASSWORD: admin123
       DEMO_TEACHER_PASSWORD: teacher123
       DEMO_STUDENT_PASSWORD: student123
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
-      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+      QWEN_MODEL: ${QWEN_MODEL:-deepseek-chat}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://api.deepseek.com/v1}
+      AI_LANGCHAIN_ENABLED: ${AI_LANGCHAIN_ENABLED:-true}
+      AI_STREAM_ENABLED: ${AI_STREAM_ENABLED:-true}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-20}
+      AI_STREAM_TIMEOUT_SECONDS: ${AI_STREAM_TIMEOUT_SECONDS:-45}
+      AI_RETRY_COUNT: ${AI_RETRY_COUNT:-1}
+      AI_RETRY_BACKOFF_MS: ${AI_RETRY_BACKOFF_MS:-300}
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.4}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-300}
+      RAG_ENABLED: ${RAG_ENABLED:-true}
+      RAG_INDEX_DIR: ${RAG_INDEX_DIR:-/app/data/chroma}
+      RAG_TOP_K: ${RAG_TOP_K:-4}
     depends_on:
       - db
-    ports:
-      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
 
   frontend:
     build:

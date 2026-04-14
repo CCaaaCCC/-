@@ -1,22 +1,143 @@
 import axios from 'axios';
 import router from '../router';
+import { getFetchErrorMessage } from '../utils/error';
+import { clearAuthSession, getAuthToken } from '../utils/authSession';
+
+type HttpError = Error & { status?: number };
+
+const createHttpError = (message: string, status?: number): HttpError => {
+    const error = new Error(message) as HttpError;
+    error.name = 'HttpError';
+    error.status = status;
+    return error;
+};
+
+const normalizeApiBase = (raw: string): string => {
+    const trimmed = raw.trim().replace(/\/+$/, '');
+    return /\/api$/i.test(trimmed) ? trimmed : `${trimmed}/api`;
+};
+
+const resolveApiBaseCandidates = (): string[] => {
+    const envBase = (import.meta as any)?.env?.VITE_API_BASE_URL as string | undefined;
+    if (envBase && envBase.trim()) {
+        return [normalizeApiBase(envBase)];
+    }
+
+    if (typeof window !== 'undefined') {
+        const candidates: string[] = [];
+        const pushCandidate = (raw: string) => {
+            const normalized = normalizeApiBase(raw);
+            if (!candidates.includes(normalized)) {
+                candidates.push(normalized);
+            }
+        };
+
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        const origin = window.location.origin;
+        const isDevFrontendPort = ['5173', '4173', '3000'].includes(window.location.port);
+
+        if (isDevFrontendPort) {
+            pushCandidate(`${protocol}//${hostname}:8000`);
+            if (hostname === 'localhost') {
+                pushCandidate('http://127.0.0.1:8000');
+            }
+            if (hostname === '127.0.0.1') {
+                pushCandidate('http://localhost:8000');
+            }
+        } else {
+            pushCandidate(`${origin}/api`);
+            pushCandidate(`${protocol}//${hostname}:8000`);
+            if (hostname === 'localhost') {
+                pushCandidate('http://127.0.0.1:8000');
+            }
+            if (hostname === '127.0.0.1') {
+                pushCandidate('http://localhost:8000');
+            }
+        }
+
+        if (candidates.length > 0) {
+            return candidates;
+        }
+    }
+
+    return ['http://localhost:8000/api'];
+};
+
+const API_BASE_CANDIDATES = resolveApiBaseCandidates();
+let apiBaseCandidateIndex = 0;
+let API_BASE_URL = API_BASE_CANDIDATES[apiBaseCandidateIndex];
+let AUTH_BASE_URL = API_BASE_URL.replace(/\/api\/?$/i, '');
+
+export const getApiBaseUrl = (): string => API_BASE_URL;
+export const getBackendOrigin = (): string => AUTH_BASE_URL;
+
+export const resolveBackendAssetUrl = (raw?: string): string => {
+    if (!raw) return '';
+    if (/^(https?:|blob:|data:)/i.test(raw)) return raw;
+    const normalized = raw.startsWith('/') ? raw : `/${raw}`;
+    return `${AUTH_BASE_URL}${normalized}`;
+};
 
 // Create axios instance with base URL pointing to the backend
 const api = axios.create({
-    baseURL: 'http://localhost:8000/api',
+    baseURL: API_BASE_URL,
     timeout: 10000
 });
 
 // Separate axios instance for auth endpoints (not under /api)
 const authApi = axios.create({
-    baseURL: 'http://localhost:8000',
+    baseURL: AUTH_BASE_URL,
     timeout: 10000
 });
+
+const applyApiBaseCandidate = (nextIndex: number): void => {
+    apiBaseCandidateIndex = nextIndex;
+    API_BASE_URL = API_BASE_CANDIDATES[apiBaseCandidateIndex];
+    AUTH_BASE_URL = API_BASE_URL.replace(/\/api\/?$/i, '');
+    api.defaults.baseURL = API_BASE_URL;
+    authApi.defaults.baseURL = AUTH_BASE_URL;
+};
+
+const promoteApiBaseCandidate = (): boolean => {
+    if (apiBaseCandidateIndex + 1 >= API_BASE_CANDIDATES.length) {
+        return false;
+    }
+    applyApiBaseCandidate(apiBaseCandidateIndex + 1);
+    return true;
+};
+
+const isNetworkFailure = (error: any): boolean => {
+    if (error?.response) {
+        return false;
+    }
+    const message = String(error?.message || '').toLowerCase();
+    return (
+        message.includes('network error')
+        || message.includes('failed to fetch')
+        || message.includes('load failed')
+        || message.includes('timeout')
+    );
+};
+
+const buildNetworkFailureMessage = (error: unknown, context: 'api' | 'auth' | 'stream' = 'api'): string => {
+    const reason = String((error as any)?.message || '').trim();
+    const contextText =
+        context === 'stream'
+            ? '流式请求无法连接后端'
+            : context === 'auth'
+                ? '认证请求无法连接后端'
+                : '请求无法连接后端';
+    const reasonText = reason ? `，原因：${reason}` : '';
+    const candidateText = API_BASE_CANDIDATES.join(' -> ');
+
+    return `Network Error: ${contextText}${reasonText}。当前地址：${API_BASE_URL}；候选地址：${candidateText}`;
+};
 
 // Request interceptor for API calls
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+        const token = getAuthToken();
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
@@ -33,15 +154,42 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+        const config = (error?.config || {}) as any;
+        if (isNetworkFailure(error) && !config.__apiBaseRetried && promoteApiBaseCandidate()) {
+            config.__apiBaseRetried = true;
+            config.baseURL = api.defaults.baseURL;
+            return api.request(config);
+        }
+
+        if (isNetworkFailure(error)) {
+            return Promise.reject(createHttpError(buildNetworkFailureMessage(error, 'api')));
+        }
+
     if (error.response && error.response.status === 401) {
       // Clear local storage and redirect to login
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      localStorage.removeItem('username');
+            clearAuthSession();
       router.push('/login');
     }
     return Promise.reject(error);
   }
+);
+
+authApi.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+        const config = (error?.config || {}) as any;
+        if (isNetworkFailure(error) && !config.__apiBaseRetried && promoteApiBaseCandidate()) {
+            config.__apiBaseRetried = true;
+            config.baseURL = authApi.defaults.baseURL;
+            return authApi.request(config);
+        }
+
+        if (isNetworkFailure(error)) {
+            return Promise.reject(createHttpError(buildNetworkFailureMessage(error, 'auth')));
+        }
+
+        return Promise.reject(error);
+    }
 );
 
 // Login function
@@ -101,15 +249,63 @@ export interface Assignment {
     id: number;
     title: string;
     description?: string;
+    teacher_id?: number;
+    teacher_name?: string;
     class_id?: number;
     class_name?: string;
     device_id?: number;
     device_name?: string;
+    start_date?: string;
     due_date?: string;
     created_at: string;
     submission_count: number;
     requirement?: string;
+    template?: string;
     is_published: boolean;
+    can_manage?: boolean;
+    can_grade?: boolean;
+}
+
+export interface PlantProfileItem {
+    id: number;
+    plant_name: string;
+    species?: string;
+    class_id?: number;
+    class_name?: string;
+    group_id?: number;
+    group_name?: string;
+    device_id?: number;
+    device_name?: string;
+    plant_date?: string;
+    cover_image?: string;
+    status?: string;
+    expected_harvest_date?: string;
+    description?: string;
+    growth_record_count?: number;
+    created_by?: number | null;
+    can_manage?: boolean;
+    created_at?: string;
+}
+
+export interface GroupItem {
+    id: number;
+    group_name: string;
+    class_id: number;
+    class_name?: string;
+    device_id?: number;
+    device_name?: string;
+    description?: string;
+    created_by?: number | null;
+    can_manage?: boolean;
+    member_count?: number;
+    members?: Array<{
+        id: number;
+        student_id: number;
+        student_name?: string;
+        username?: string;
+        role: string;
+    }>;
+    created_at?: string;
 }
 
 export interface UserProfile {
@@ -144,6 +340,22 @@ export interface NotificationItem {
     created_at: string;
 }
 
+export interface OperationLogItem {
+    id: number;
+    operator_id: number;
+    operator_name?: string;
+    operation_type: string;
+    target_user_id?: number;
+    target_user_name?: string;
+    details?: string;
+    created_at: string;
+}
+
+export interface OperationLogsResponse {
+    items: OperationLogItem[];
+    total: number;
+}
+
 export interface AssignmentSubmission {
     id: number;
     assignment_id: number;
@@ -166,6 +378,169 @@ export interface AssignmentSubmission {
     report_file_size?: number;
 }
 
+export interface AssignmentAIFeedback {
+    score_band: string;
+    strengths: string[];
+    improvements: string[];
+    teacher_comment_draft: string;
+    source: string;
+    debug_context?: {
+        assignment_id: number;
+        submission_id: number;
+    };
+}
+
+export interface ContentCategory {
+    id: number;
+    name: string;
+    description?: string | null;
+    parent_id?: number | null;
+    sort_order: number;
+    created_at: string;
+}
+
+export interface ContentCategoryPayload {
+    name: string;
+    description?: string;
+    parent_id?: number;
+    sort_order?: number;
+}
+
+export interface ContentCategoryTreeNode extends ContentCategory {
+    children?: ContentCategory[];
+}
+
+export type TeachingContentType = 'article' | 'video' | 'image' | 'pdf';
+
+export interface TeachingContentBasePayload {
+    title: string;
+    category_id: number;
+    content_type: TeachingContentType | string;
+    content?: string;
+    video_url?: string;
+    file_path?: string;
+    cover_image?: string;
+}
+
+export interface TeachingContentCreatePayload extends TeachingContentBasePayload {
+    is_published?: boolean;
+}
+
+export type TeachingContentUpdatePayload = Partial<TeachingContentBasePayload> & {
+    is_published?: boolean;
+};
+
+export interface TeachingContentListItem {
+    id: number;
+    title: string;
+    category_id: number;
+    category_name?: string | null;
+    content_type: TeachingContentType | string;
+    content?: string | null;
+    video_url?: string | null;
+    file_path?: string | null;
+    cover_image?: string | null;
+    author_id: number;
+    author_name?: string | null;
+    author_username?: string | null;
+    publisher_name?: string | null;
+    view_count: number;
+    is_published: boolean;
+    published_at?: string | null;
+    created_at: string;
+    updated_at: string;
+    can_edit?: boolean;
+    can_delete?: boolean;
+    can_publish?: boolean;
+}
+
+export interface TeachingContentDetail extends TeachingContentListItem {
+    category?: ContentCategory | null;
+}
+
+export interface ContentListParams {
+    category_id?: number;
+    content_type?: string;
+    is_published?: boolean;
+    search?: string;
+    page?: number;
+    page_size?: number;
+}
+
+export interface ContentListResponse {
+    items: TeachingContentListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+}
+
+export interface ContentAIPolishPayload {
+    bullet_points: string;
+    mode?: 'conservative' | 'expanded' | 'article';
+    tone?: string;
+    target_length?: string;
+}
+
+export interface ContentAIPolishResult {
+    title_suggestion: string;
+    organized_content: string;
+    source: string;
+}
+
+export interface StudentLearningRecord {
+    id: number;
+    student_id: number;
+    content_id: number;
+    status: 'not_started' | 'in_progress' | 'completed' | string;
+    progress_percent: number;
+    time_spent_seconds: number;
+    last_accessed: string;
+    completed_at?: string | null;
+}
+
+export interface ContentComment {
+    id: number;
+    content_id: number;
+    student_id: number;
+    student_name?: string | null;
+    student_avatar_url?: string | null;
+    parent_id?: number | null;
+    comment: string;
+    like_count: number;
+    liked: boolean;
+    teacher_reply?: string | null;
+    reply_at?: string | null;
+    created_at: string;
+    replies: ContentComment[];
+}
+
+export interface ContentCommentLikeResponse {
+    comment_id: number;
+    liked: boolean;
+    like_count: number;
+}
+
+export interface LearningStatsResponse {
+    total_students: number;
+    total_contents: number;
+    total_learning_records: number;
+    completed_count: number;
+    in_progress_count: number;
+    not_started_count: number;
+    completion_rate: number;
+    average_progress: number;
+}
+
+export interface StudentProgress {
+    student_id: number;
+    student_name: string;
+    total_contents: number;
+    completed_count: number;
+    in_progress_count: number;
+    completion_rate: number;
+    total_time_spent: number;
+}
+
 export interface TelemetryRealtimePayload {
     type: 'snapshot' | 'telemetry_update' | 'control_update';
     device_id: number;
@@ -186,11 +561,82 @@ export interface TelemetryRealtimePayload {
 export interface AIScienceAskRequest {
     question: string;
     device_id?: number;
+    conversation_history?: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+    }>;
+    enable_deep_thinking?: boolean;
+    enable_web_search?: boolean;
+}
+
+export interface AIConversationAskRequest {
+    question: string;
+    device_id?: number;
+    enable_deep_thinking?: boolean;
+    enable_web_search?: boolean;
+}
+
+export interface AISourceLink {
+    title: string;
+    url: string;
+    snippet?: string | null;
 }
 
 export interface AIScienceAskResponse {
     answer: string;
     source: 'qwen' | 'rule-based' | string;
+    model: string;
+    deep_thinking: boolean;
+    web_search_enabled: boolean;
+    web_search_used: boolean;
+    web_search_notice?: string | null;
+    citations: AISourceLink[];
+}
+
+export interface AIScienceStreamMeta {
+    source?: string;
+    model?: string;
+    deep_thinking?: boolean;
+    web_search_enabled?: boolean;
+    web_search_used?: boolean;
+    web_search_notice?: string | null;
+    citations?: AISourceLink[];
+}
+
+export interface AIConversationSummary {
+    id: number;
+    title: string;
+    is_pinned: boolean;
+    pinned_at?: string | null;
+    created_at: string;
+    updated_at: string;
+    last_message_at?: string | null;
+    message_count: number;
+    preview?: string | null;
+}
+
+export interface AIConversationMessage {
+    id: number;
+    role: 'user' | 'assistant';
+    content: string;
+    reasoning?: string | null;
+    source?: string | null;
+    model?: string | null;
+    citations: AISourceLink[];
+    web_search_notice?: string | null;
+    status: 'done' | 'error';
+    created_at: string;
+}
+
+export interface AIConversationDetail {
+    id: number;
+    title: string;
+    is_pinned: boolean;
+    pinned_at?: string | null;
+    created_at: string;
+    updated_at: string;
+    last_message_at?: string | null;
+    messages: AIConversationMessage[];
 }
 
 export type DemoScenario = 'drought' | 'heatwave' | 'low_light' | 'healthy';
@@ -220,6 +666,196 @@ export const askScienceAssistant = async (data: AIScienceAskRequest): Promise<AI
     return response.data;
 };
 
+const streamScienceAssistantByPath = async (
+    path: string,
+    data: AIScienceAskRequest | AIConversationAskRequest,
+    onToken: (text: string, reasoning?: string) => void,
+    onMeta?: (meta: AIScienceStreamMeta) => void,
+    options?: { signal?: AbortSignal }
+): Promise<void> => {
+    const token = getAuthToken();
+    let response: Response | null = null;
+    let streamBaseRetried = false;
+
+    while (!response) {
+        const baseUrl = api.defaults.baseURL || API_BASE_URL;
+        try {
+            response = await fetch(`${baseUrl}${path}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(data),
+                signal: options?.signal
+            });
+        } catch (error: any) {
+            if (error?.name === 'AbortError') {
+                throw error;
+            }
+
+            if (!streamBaseRetried && isNetworkFailure(error) && promoteApiBaseCandidate()) {
+                streamBaseRetried = true;
+                continue;
+            }
+
+            throw createHttpError(buildNetworkFailureMessage(error, 'stream'));
+        }
+    }
+
+    if (!response.ok) {
+        const message = await getFetchErrorMessage(response, `请求失败 (${response.status})`);
+        throw createHttpError(message, response.status);
+    }
+
+    if (!response.body) {
+        throw createHttpError('浏览器不支持流式响应');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    const processBlock = (blockText: string): boolean => {
+        const block = blockText.trim();
+        if (!block) {
+            return false;
+        }
+
+        let eventName = 'message';
+        const dataLines: string[] = [];
+
+        for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) {
+                eventName = line.slice('event:'.length).trim();
+            } else if (line.startsWith('data:')) {
+                dataLines.push(line.slice('data:'.length).trim());
+            }
+        }
+
+        if (dataLines.length === 0) {
+            return false;
+        }
+
+        const payloadText = dataLines.join('\n');
+        let payload: any = {};
+        try {
+            payload = JSON.parse(payloadText);
+        } catch {
+            payload = { text: payloadText };
+        }
+
+        if (eventName === 'meta') {
+            onMeta?.(payload);
+            return false;
+        }
+
+        if (eventName === 'token') {
+            if (typeof payload.text === 'string' || typeof payload.reasoning === 'string') {
+                onToken(payload.text || '', payload.reasoning || '');
+            }
+            return false;
+        }
+
+        if (eventName === 'error') {
+            throw createHttpError(String(payload.message || '流式响应异常'));
+        }
+
+        return eventName === 'done';
+    };
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+            buffer += decoder.decode();
+            break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replace(/\r\n/g, '\n');
+
+        let sepIndex = buffer.indexOf('\n\n');
+        while (sepIndex !== -1) {
+            const block = buffer.slice(0, sepIndex);
+            buffer = buffer.slice(sepIndex + 2);
+
+            if (processBlock(block)) {
+                return;
+            }
+
+            sepIndex = buffer.indexOf('\n\n');
+        }
+    }
+
+    buffer = buffer.replace(/\r\n/g, '\n');
+
+    if (buffer.trim()) {
+        processBlock(buffer);
+    }
+};
+
+export const streamScienceAssistant = async (
+    data: AIScienceAskRequest,
+    onToken: (text: string, reasoning?: string) => void,
+    onMeta?: (meta: AIScienceStreamMeta) => void,
+    options?: { signal?: AbortSignal }
+): Promise<void> => {
+    await streamScienceAssistantByPath('/ai/science-assistant/stream', data, onToken, onMeta, options);
+};
+
+export const getAIConversations = async (): Promise<AIConversationSummary[]> => {
+    const response = await api.get<AIConversationSummary[]>('/ai/conversations');
+    return response.data;
+};
+
+export const createAIConversation = async (payload?: { title?: string }): Promise<AIConversationSummary> => {
+    const response = await api.post<AIConversationSummary>('/ai/conversations', payload || {});
+    return response.data;
+};
+
+export const getAIConversationDetail = async (conversationId: number): Promise<AIConversationDetail> => {
+    const response = await api.get<AIConversationDetail>(`/ai/conversations/${conversationId}`);
+    return response.data;
+};
+
+export const renameAIConversation = async (conversationId: number, title: string): Promise<AIConversationSummary> => {
+    const response = await api.patch<AIConversationSummary>(`/ai/conversations/${conversationId}/title`, { title });
+    return response.data;
+};
+
+export const pinAIConversation = async (conversationId: number, isPinned: boolean): Promise<AIConversationSummary> => {
+    const response = await api.patch<AIConversationSummary>(`/ai/conversations/${conversationId}/pin`, { is_pinned: isPinned });
+    return response.data;
+};
+
+export const deleteAIConversation = async (conversationId: number): Promise<void> => {
+    await api.delete(`/ai/conversations/${conversationId}`);
+};
+
+export const askScienceAssistantInConversation = async (
+    conversationId: number,
+    data: AIConversationAskRequest
+): Promise<AIScienceAskResponse> => {
+    const response = await api.post<AIScienceAskResponse>(`/ai/conversations/${conversationId}/science-assistant`, data);
+    return response.data;
+};
+
+export const streamScienceAssistantInConversation = async (
+    conversationId: number,
+    data: AIConversationAskRequest,
+    onToken: (text: string, reasoning?: string) => void,
+    onMeta?: (meta: AIScienceStreamMeta) => void,
+    options?: { signal?: AbortSignal }
+): Promise<void> => {
+    await streamScienceAssistantByPath(
+        `/ai/conversations/${conversationId}/science-assistant/stream`,
+        data,
+        onToken,
+        onMeta,
+        options
+    );
+};
+
 export const triggerDemoScenario = async (deviceId: number, scenario: DemoScenario): Promise<{ status: string; scenario: string; message: string }> => {
     const response = await api.post(`/demo/scenario/${deviceId}`, { scenario });
     return response.data;
@@ -230,9 +866,8 @@ export const createTelemetrySocket = (
     onMessage: (payload: TelemetryRealtimePayload) => void,
     onClose?: () => void
 ): WebSocket => {
-    const token = localStorage.getItem('token') || '';
-    const apiBase = (api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-    const backendUrl = apiBase || `${window.location.protocol}//${window.location.hostname}:8000`;
+    const token = getAuthToken();
+    const backendUrl = (api.defaults.baseURL || API_BASE_URL).replace(/\/api\/?$/, '') || AUTH_BASE_URL;
     const backend = new URL(backendUrl, window.location.origin);
     const wsProtocol = backend.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${wsProtocol}//${backend.host}/ws/telemetry/${deviceId}?token=${encodeURIComponent(token)}`;
@@ -411,55 +1046,48 @@ export const batchResetPassword = async (userIds: number[], newPassword: string)
 };
 
 // 教学内容管理 API
-export const getCategories = async (): Promise<any[]> => {
+export const getCategories = async (): Promise<ContentCategory[]> => {
     const response = await api.get('/content/categories');
     return response.data;
 };
 
-export const createCategory = async (category: any): Promise<any> => {
-    const response = await api.post('/content/categories', category);
+export const createCategory = async (category: ContentCategoryPayload): Promise<ContentCategory> => {
+    const response = await api.post<ContentCategory>('/content/categories', category);
     return response.data;
 };
 
-export const getCategoriesTree = async (): Promise<any[]> => {
-    const response = await api.get('/content/categories/tree');
+export const getCategoriesTree = async (): Promise<ContentCategoryTreeNode[]> => {
+    const response = await api.get<ContentCategoryTreeNode[]>('/content/categories/tree');
     return response.data;
 };
 
-export const updateCategory = async (id: number, category: any): Promise<any> => {
-    const response = await api.put(`/content/categories/${id}`, category);
+export const updateCategory = async (id: number, category: ContentCategoryPayload): Promise<ContentCategory> => {
+    const response = await api.put<ContentCategory>(`/content/categories/${id}`, category);
     return response.data;
 };
 
-export const deleteCategory = async (id: number): Promise<any> => {
-    const response = await api.delete(`/content/categories/${id}`);
+export const deleteCategory = async (id: number): Promise<{ message: string }> => {
+    const response = await api.delete<{ message: string }>(`/content/categories/${id}`);
     return response.data;
 };
 
-export const getContents = async (params?: {
-    category_id?: number;
-    content_type?: string;
-    is_published?: boolean;
-    search?: string;
-    page?: number;
-    page_size?: number;
-}): Promise<{ items: any[]; total: number; page: number; page_size: number }> => {
-    const response = await api.get('/content/contents', { params });
+export const getContents = async (params?: ContentListParams): Promise<ContentListResponse> => {
+    const response = await api.get<ContentListResponse>('/content/contents', { params });
     return response.data;
 };
 
-export const getContent = async (id: number): Promise<any> => {
-    const response = await api.get(`/content/contents/${id}`);
+export const getContent = async (id: number): Promise<TeachingContentDetail> => {
+    const response = await api.get<TeachingContentDetail>(`/content/contents/${id}`);
     return response.data;
 };
 
-export const createContent = async (content: any): Promise<any> => {
-    const response = await api.post('/content/contents', content);
+export const createContent = async (content: TeachingContentCreatePayload): Promise<TeachingContentDetail> => {
+    const response = await api.post<TeachingContentDetail>('/content/contents', content);
     return response.data;
 };
 
-export const updateContent = async (id: number, content: any): Promise<any> => {
-    const response = await api.put(`/content/contents/${id}`, content);
+export const updateContent = async (id: number, content: TeachingContentUpdatePayload): Promise<TeachingContentDetail> => {
+    const response = await api.put<TeachingContentDetail>(`/content/contents/${id}`, content);
     return response.data;
 };
 
@@ -467,53 +1095,58 @@ export const deleteContent = async (id: number): Promise<void> => {
     await api.delete(`/content/contents/${id}`);
 };
 
-export const publishContent = async (id: number): Promise<any> => {
-    const response = await api.post(`/content/contents/${id}/publish`);
+export const publishContent = async (id: number): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(`/content/contents/${id}/publish`);
     return response.data;
 };
 
-export const getMyLearning = async (): Promise<any[]> => {
-    const response = await api.get('/content/my-learning');
+export const polishTeachingContent = async (payload: ContentAIPolishPayload): Promise<ContentAIPolishResult> => {
+    const response = await api.post<ContentAIPolishResult>('/content/ai/polish', payload);
     return response.data;
 };
 
-export const startLearning = async (contentId: number): Promise<any> => {
-    const response = await api.post(`/content/contents/${contentId}/start`);
+export const getMyLearning = async (): Promise<StudentLearningRecord[]> => {
+    const response = await api.get<StudentLearningRecord[]>('/content/my-learning');
     return response.data;
 };
 
-export const completeLearning = async (contentId: number): Promise<any> => {
-    const response = await api.post(`/content/contents/${contentId}/complete`);
+export const startLearning = async (contentId: number): Promise<StudentLearningRecord> => {
+    const response = await api.post<StudentLearningRecord>(`/content/contents/${contentId}/start`);
     return response.data;
 };
 
-export const getComments = async (contentId: number): Promise<any[]> => {
-    const response = await api.get(`/content/contents/${contentId}/comments`);
+export const completeLearning = async (contentId: number): Promise<StudentLearningRecord> => {
+    const response = await api.post<StudentLearningRecord>(`/content/contents/${contentId}/complete`);
     return response.data;
 };
 
-export const addComment = async (contentId: number, comment: string): Promise<any> => {
-    const response = await api.post(`/content/contents/${contentId}/comments`, { comment });
+export const getComments = async (contentId: number): Promise<ContentComment[]> => {
+    const response = await api.get<ContentComment[]>(`/content/contents/${contentId}/comments`);
     return response.data;
 };
 
-export const replyComment = async (commentId: number, comment: string): Promise<any> => {
-    const response = await api.post(`/content/comments/${commentId}/reply`, { comment });
+export const addComment = async (contentId: number, comment: string): Promise<ContentComment> => {
+    const response = await api.post<ContentComment>(`/content/contents/${contentId}/comments`, { comment });
     return response.data;
 };
 
-export const toggleCommentLike = async (commentId: number): Promise<{ comment_id: number; liked: boolean; like_count: number }> => {
-    const response = await api.post(`/content/comments/${commentId}/like`);
+export const replyComment = async (commentId: number, comment: string): Promise<ContentComment> => {
+    const response = await api.post<ContentComment>(`/content/comments/${commentId}/reply`, { comment });
     return response.data;
 };
 
-export const getLearningStats = async (): Promise<any> => {
-    const response = await api.get('/content/stats/overview');
+export const toggleCommentLike = async (commentId: number): Promise<ContentCommentLikeResponse> => {
+    const response = await api.post<ContentCommentLikeResponse>(`/content/comments/${commentId}/like`);
     return response.data;
 };
 
-export const getStudentsProgress = async (): Promise<any[]> => {
-    const response = await api.get('/content/stats/students');
+export const getLearningStats = async (): Promise<LearningStatsResponse> => {
+    const response = await api.get<LearningStatsResponse>('/content/stats/overview');
+    return response.data;
+};
+
+export const getStudentsProgress = async (): Promise<StudentProgress[]> => {
+    const response = await api.get<StudentProgress[]>('/content/stats/students');
     return response.data;
 };
 
@@ -598,6 +1231,16 @@ export const gradeAssignment = async (assignmentId: number, submissionId: number
     return response.data;
 };
 
+export const getAssignmentAIFeedback = async (
+    assignmentId: number,
+    submissionId: number
+): Promise<AssignmentAIFeedback> => {
+    const response = await api.post<AssignmentAIFeedback>(`/assignments/${assignmentId}/ai-feedback`, {
+        submission_id: submissionId
+    });
+    return response.data;
+};
+
 // 植物档案 API
 export const getPlants = async (params?: any): Promise<any[]> => {
     const response = await api.get('/plants', { params });
@@ -625,6 +1268,14 @@ export const getPlantRecords = async (plantId: number): Promise<any[]> => {
 
 export const createPlantRecord = async (plantId: number, record: any): Promise<any> => {
     const response = await api.post(`/plants/${plantId}/records`, record);
+    return response.data;
+};
+
+export const migratePlant = async (
+    plantId: number,
+    payload: { target_class_id: number; target_group_id?: number | null; target_device_id?: number | null }
+): Promise<any> => {
+    const response = await api.post(`/admin/plants/${plantId}/migrate`, payload);
     return response.data;
 };
 
@@ -667,6 +1318,22 @@ export const removeGroupMember = async (memberId: number): Promise<void> => {
     await api.delete(`/groups/members/${memberId}`);
 };
 
+export const migrateGroup = async (
+    groupId: number,
+    payload: { target_class_id: number; target_device_id?: number | null }
+): Promise<any> => {
+    const response = await api.post(`/admin/groups/${groupId}/migrate`, payload);
+    return response.data;
+};
+
+export const batchUpdateGroupMemberRoles = async (
+    groupId: number,
+    updates: Array<{ member_id: number; role: string }>
+): Promise<{ updated: number; group_id: number }> => {
+    const response = await api.post(`/admin/groups/${groupId}/members/batch-role`, { updates });
+    return response.data;
+};
+
 export const getMyProfile = async (): Promise<UserProfile> => {
     const response = await api.get('/profile/me');
     return response.data;
@@ -704,6 +1371,45 @@ export const markNotificationRead = async (notificationId: number): Promise<{ me
 export const markAllNotificationsRead = async (): Promise<{ message: string; updated: number }> => {
     const response = await api.post('/notifications/read-all');
     return response.data;
+};
+
+export const getOperationLogs = async (params?: {
+    operation_type?: string;
+    operator_id?: number;
+    start_date?: string;
+    end_date?: string;
+    page?: number;
+    page_size?: number;
+}): Promise<OperationLogsResponse> => {
+    const response = await api.get('/logs/operations', { params });
+    return response.data;
+};
+
+export const exportOperationLogs = async (params?: {
+    start_date?: string;
+    end_date?: string;
+}): Promise<{ blob: Blob; filename: string | null }> => {
+    const response = await api.post('/logs/operations/export', null, {
+        params,
+        responseType: 'blob',
+    });
+
+    const contentDisposition = response.headers['content-disposition'] as string | undefined;
+    let filename: string | null = null;
+    if (contentDisposition) {
+        const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+        const rawName = utf8Match?.[1] || plainMatch?.[1];
+        if (rawName) {
+            try {
+                filename = decodeURIComponent(rawName);
+            } catch {
+                filename = rawName;
+            }
+        }
+    }
+
+    return { blob: response.data, filename };
 };
 
 export default api;

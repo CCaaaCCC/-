@@ -21,7 +21,7 @@
         </template>
         <el-form :model="loginForm" label-width="0px">
           <el-form-item>
-            <el-input v-model="loginForm.username" placeholder="用户名" :prefix-icon="User" size="large" />
+            <el-input v-model="loginForm.username" placeholder="用户名" :prefix-icon="User" size="large" autofocus />
           </el-form-item>
           <el-form-item>
             <el-input
@@ -35,7 +35,7 @@
             />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" class="login-btn" @click="handleLogin" :loading="loading">
+            <el-button type="primary" class="login-btn" @click="handleLogin" :loading="loading" :disabled="!canSubmit">
               登录
             </el-button>
           </el-form-item>
@@ -46,11 +46,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { User, Lock } from '@element-plus/icons-vue';
 import { login } from '../api';
 import { ElMessage } from 'element-plus';
+import { getErrorMessage } from '../utils/error';
 
 const router = useRouter();
 const route = useRoute();
@@ -59,21 +60,28 @@ const loginForm = ref({
   password: ''
 });
 const loading = ref(false);
+const REMEMBERED_USERNAME_KEY = 'auth.lastUsername';
+
+const canSubmit = computed(() => {
+  return Boolean(loginForm.value.username.trim() && loginForm.value.password.trim() && !loading.value);
+});
 
 const handleLogin = async () => {
-  if (!loginForm.value.username || !loginForm.value.password) {
+  if (!canSubmit.value) {
     ElMessage.warning('请输入用户名和密码');
     return;
   }
 
   loading.value = true;
   try {
-    const response = await login(loginForm.value.username, loginForm.value.password);
+    const username = loginForm.value.username.trim();
+    const response = await login(username, loginForm.value.password);
 
     // Store token and role
     localStorage.setItem('token', response.access_token);
     localStorage.setItem('role', response.role);
-    localStorage.setItem('username', loginForm.value.username);
+    localStorage.setItem('username', username);
+    localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
 
     ElMessage.success('登录成功');
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/';
@@ -85,13 +93,20 @@ const handleLogin = async () => {
     } else if (status >= 500) {
       ElMessage.error('服务暂时不可用，请稍后重试');
     } else {
-      ElMessage.error('登录失败，请检查网络或后端服务状态');
+      ElMessage.error(getErrorMessage(error, '登录失败，请检查网络或后端服务状态'));
     }
     console.error(error);
   } finally {
     loading.value = false;
   }
 };
+
+onMounted(() => {
+  const remembered = localStorage.getItem(REMEMBERED_USERNAME_KEY);
+  if (remembered && !loginForm.value.username) {
+    loginForm.value.username = remembered;
+  }
+});
 </script>
 
 <style scoped>
@@ -101,6 +116,10 @@ const handleLogin = async () => {
   align-items: center;
   min-height: 100vh;
   padding: 28px;
+  background:
+    radial-gradient(circle at 10% 0, var(--layout-glow-left), transparent 32%),
+    radial-gradient(circle at 90% 0, var(--layout-glow-right), transparent 28%),
+    linear-gradient(180deg, var(--bg-page) 0%, var(--bg-surface) 100%);
 }
 
 .login-shell {
@@ -110,6 +129,7 @@ const handleLogin = async () => {
   overflow: hidden;
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
+  border: 1px solid var(--el-border-color-light);
 }
 
 .card-header {
@@ -119,17 +139,24 @@ const handleLogin = async () => {
 .card-header h2 {
   margin: 0;
   font-size: 24px;
+  color: var(--text-main);
 }
 
 .card-header p {
   margin: 8px 0 0;
-  color: #6f8578;
+  color: var(--text-tertiary);
 }
 
 .login-hero {
   padding: 46px 40px;
-  background: linear-gradient(165deg, rgba(39, 117, 71, 0.9), rgba(22, 82, 52, 0.85));
-  color: #ecf8f0;
+  background: linear-gradient(165deg, var(--color-plant-700) 0%, var(--color-plant-600) 100%);
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--color-plant-700) 78%, var(--bg-page)) 0%,
+    color-mix(in srgb, var(--color-plant-600) 70%, var(--bg-page)) 100%
+  );
+  color: var(--el-color-white);
+  color: color-mix(in srgb, var(--text-main) 18%, #ffffff 82%);
 }
 
 .hero-badge {
@@ -139,7 +166,10 @@ const handleLogin = async () => {
   font-size: 12px;
   letter-spacing: 0.08em;
   margin-bottom: 14px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.16);
+  background: color-mix(in srgb, var(--glass-bg-strong) 76%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border: 1px solid color-mix(in srgb, var(--el-border-color-light) 70%, transparent);
 }
 
 .login-hero h1 {
@@ -164,7 +194,7 @@ const handleLogin = async () => {
 .login-card {
   border: 0;
   border-radius: 0;
-  background: rgba(250, 255, 252, 0.92);
+  background: var(--glass-bg-strong);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -180,6 +210,11 @@ const handleLogin = async () => {
   width: 100%;
   height: 44px;
   border-radius: 10px;
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+
+.login-btn:not(:disabled):hover {
+  transform: translateY(-1px);
 }
 
 @media (max-width: 900px) {

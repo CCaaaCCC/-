@@ -4,6 +4,7 @@ export {
   uploadPlantImage,
   getPlantRecords,
   createPlantRecord,
+  migratePlant,
 } from './index';
 
 // index.ts currently doesn't expose PlantProfile/GrowthRecord types.

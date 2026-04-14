@@ -136,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { init, use, graphic } from 'echarts/core';
 import { LineChart } from 'echarts/charts';
@@ -144,10 +144,12 @@ import { GridComponent, TooltipComponent, TitleComponent } from 'echarts/compone
 import { CanvasRenderer } from 'echarts/renderers';
 import type { ECharts } from 'echarts/core';
 import api from '../api/index';
+import { useTheme } from '../composables/useTheme';
 
 use([LineChart, GridComponent, TooltipComponent, TitleComponent, CanvasRenderer]);
 
 const route = useRoute();
+const { effectiveTheme } = useTheme();
 
 type DisplayStatus = 'success' | 'warning' | 'error';
 
@@ -216,12 +218,59 @@ const recentRecords = ref<Array<{
 const currentDate = ref('');
 const currentTime = ref('');
 let timer: ReturnType<typeof setInterval> | null = null;
+let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 图表
 const tempChart = ref<HTMLElement | null>(null);
 const humidityChart = ref<HTMLElement | null>(null);
 let tempChartInstance: ECharts | null = null;
 let humidityChartInstance: ECharts | null = null;
+const latestHistoryRows = ref<any[]>([]);
+let refreshInFlight = false;
+let refreshQueued = false;
+let isViewUnmounted = false;
+
+const readCssVar = (name: string, fallback: string) => {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return raw || fallback;
+};
+
+const getChartTokens = () => {
+  return {
+    titleColor: readCssVar('--chart-text', '#f3f6ff'),
+    axisColor: readCssVar('--chart-axis', '#c8d7ef'),
+    gridColor: readCssVar('--chart-grid', 'rgba(175, 200, 235, 0.26)'),
+    tooltipBg: readCssVar('--chart-tooltip-bg', 'rgba(20, 48, 79, 0.9)'),
+    tooltipBorder: readCssVar('--chart-tooltip-border', 'rgba(175, 200, 235, 0.3)'),
+    tempColor: readCssVar('--el-color-danger', '#e2645f'),
+    humidityColor: readCssVar('--el-color-primary', '#2d9d78')
+  };
+};
+
+const colorWithAlpha = (color: string, alpha: number): string => {
+  const normalized = color.trim();
+  if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(normalized)) {
+    const hex = normalized.slice(1);
+    const fullHex = hex.length === 3
+      ? hex.split('').map((ch) => `${ch}${ch}`).join('')
+      : hex;
+    const int = Number.parseInt(fullHex, 16);
+    const r = (int >> 16) & 255;
+    const g = (int >> 8) & 255;
+    const b = int & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgbMatch) {
+    const channels = rgbMatch[1].split(',').map((part) => part.trim());
+    if (channels.length >= 3) {
+      return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`;
+    }
+  }
+
+  return normalized;
+};
 
 // 全屏
 const isFullscreen = ref(false);
@@ -241,42 +290,75 @@ const buildAxisFromHistory = (rows: any[]) => {
 const updateChartsFromHistory = (rows: any[]) => {
   if (!tempChartInstance || !humidityChartInstance) return;
   const { times, temps, humidities } = buildAxisFromHistory(rows);
+  const tokens = getChartTokens();
 
   tempChartInstance.setOption({
-    title: { text: '温度变化', left: 'center', textStyle: { color: '#333', fontSize: 14 } },
-    tooltip: { trigger: 'axis' },
+    title: { text: '温度变化', left: 'center', textStyle: { color: tokens.titleColor, fontSize: 14 } },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: tokens.tooltipBg,
+      borderColor: tokens.tooltipBorder,
+      textStyle: { color: tokens.titleColor }
+    },
     grid: { top: 40, bottom: 30, left: 50, right: 20 },
-    xAxis: { type: 'category', data: times, axisLabel: { rotate: 45 } },
-    yAxis: { type: 'value', name: '°C', axisLabel: { formatter: '{value}°C' } },
+    xAxis: {
+      type: 'category',
+      data: times,
+      axisLabel: { rotate: 45, color: tokens.axisColor },
+      axisLine: { lineStyle: { color: tokens.gridColor } }
+    },
+    yAxis: {
+      type: 'value',
+      name: '°C',
+      axisLabel: { formatter: '{value}°C', color: tokens.axisColor },
+      nameTextStyle: { color: tokens.axisColor },
+      splitLine: { lineStyle: { color: tokens.gridColor } }
+    },
     series: [{
       type: 'line',
       data: temps,
       smooth: true,
-      itemStyle: { color: '#f56c6c' },
+      itemStyle: { color: tokens.tempColor },
       areaStyle: {
         color: new graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: 'rgba(245, 108, 108, 0.5)' },
-          { offset: 1, color: 'rgba(245, 108, 108, 0.1)' }
+          { offset: 0, color: colorWithAlpha(tokens.tempColor, 0.45) },
+          { offset: 1, color: colorWithAlpha(tokens.tempColor, 0.08) }
         ])
       }
     }]
   });
 
   humidityChartInstance.setOption({
-    title: { text: '湿度变化', left: 'center', textStyle: { color: '#333', fontSize: 14 } },
-    tooltip: { trigger: 'axis' },
+    title: { text: '湿度变化', left: 'center', textStyle: { color: tokens.titleColor, fontSize: 14 } },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: tokens.tooltipBg,
+      borderColor: tokens.tooltipBorder,
+      textStyle: { color: tokens.titleColor }
+    },
     grid: { top: 40, bottom: 30, left: 50, right: 20 },
-    xAxis: { type: 'category', data: times, axisLabel: { rotate: 45 } },
-    yAxis: { type: 'value', name: '%', axisLabel: { formatter: '{value}%' } },
+    xAxis: {
+      type: 'category',
+      data: times,
+      axisLabel: { rotate: 45, color: tokens.axisColor },
+      axisLine: { lineStyle: { color: tokens.gridColor } }
+    },
+    yAxis: {
+      type: 'value',
+      name: '%',
+      axisLabel: { formatter: '{value}%', color: tokens.axisColor },
+      nameTextStyle: { color: tokens.axisColor },
+      splitLine: { lineStyle: { color: tokens.gridColor } }
+    },
     series: [{
       type: 'line',
       data: humidities,
       smooth: true,
-      itemStyle: { color: '#409EFF' },
+      itemStyle: { color: tokens.humidityColor },
       areaStyle: {
         color: new graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: 'rgba(64, 158, 255, 0.5)' },
-          { offset: 1, color: 'rgba(64, 158, 255, 0.1)' }
+          { offset: 0, color: colorWithAlpha(tokens.humidityColor, 0.45) },
+          { offset: 1, color: colorWithAlpha(tokens.humidityColor, 0.08) }
         ])
       }
     }]
@@ -302,7 +384,7 @@ const updateTime = () => {
 // 加载实时数据（使用公开 API）
 const loadTelemetry = async () => {
   const data = await fetchDisplayData();
-  if (!data) {
+  if (isViewUnmounted || !data) {
     return;
   }
 
@@ -331,6 +413,10 @@ const loadTelemetry = async () => {
     recentRecords.value = data.recent_records;
   }
 
+  if (isViewUnmounted) {
+    return;
+  }
+
   lastSyncText.value = `最近同步：${new Date().toLocaleTimeString('zh-CN')}`;
   setDisplayStatus('success', '实时数据同步正常');
 };
@@ -343,23 +429,65 @@ const initCharts = () => {
   humidityChartInstance = init(humidityChart.value);
 };
 
+const handleResize = () => {
+  if (resizeTimer) {
+    clearTimeout(resizeTimer);
+  }
+
+  resizeTimer = setTimeout(() => {
+    tempChartInstance?.resize();
+    humidityChartInstance?.resize();
+  }, 140);
+};
+
 const refreshDisplayData = async () => {
-  await loadTelemetry();
-  const rows = await fetchDisplayHistory();
-  if (rows.length > 0) {
-    updateChartsFromHistory(rows);
+  if (isViewUnmounted) {
+    return;
+  }
+
+  if (refreshInFlight) {
+    refreshQueued = true;
+    return;
+  }
+
+  refreshInFlight = true;
+  try {
+    const [, rows] = await Promise.all([loadTelemetry(), fetchDisplayHistory()]);
+    if (isViewUnmounted) {
+      return;
+    }
+
+    latestHistoryRows.value = rows;
+    if (rows.length > 0) {
+      updateChartsFromHistory(rows);
+    }
+  } finally {
+    refreshInFlight = false;
+    if (refreshQueued && !isViewUnmounted) {
+      refreshQueued = false;
+      void refreshDisplayData();
+    }
   }
 };
+
+watch(effectiveTheme, () => {
+  if (latestHistoryRows.value.length > 0) {
+    updateChartsFromHistory(latestHistoryRows.value);
+  }
+});
 
 // 全屏切换
 const toggleFullscreen = () => {
   if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen();
-    isFullscreen.value = true;
+    void document.documentElement.requestFullscreen();
+    return;
   } else {
-    document.exitFullscreen();
-    isFullscreen.value = false;
+    void document.exitFullscreen();
   }
+};
+
+const syncFullscreenState = () => {
+  isFullscreen.value = Boolean(document.fullscreenElement);
 };
 
 // 辅助函数
@@ -389,6 +517,7 @@ const getStageClass = (stage?: string) => {
 
 // 生命周期
 onMounted(() => {
+  isViewUnmounted = false;
   const routeDeviceId = Number(route.query.device_id);
   if (Number.isInteger(routeDeviceId) && routeDeviceId > 0) {
     activeDeviceId.value = routeDeviceId;
@@ -397,18 +526,25 @@ onMounted(() => {
   updateTime();
   timer = setInterval(() => {
     updateTime();
-    refreshDisplayData();
+    void refreshDisplayData();
   }, 5000);
 
   loading.value = true;
   initCharts();
+  window.addEventListener('resize', handleResize);
+  document.addEventListener('fullscreenchange', syncFullscreenState);
   refreshDisplayData().finally(() => {
     loading.value = false;
   });
 });
 
 onUnmounted(() => {
+  isViewUnmounted = true;
+  refreshQueued = false;
   if (timer) clearInterval(timer);
+  if (resizeTimer) clearTimeout(resizeTimer);
+  window.removeEventListener('resize', handleResize);
+  document.removeEventListener('fullscreenchange', syncFullscreenState);
   if (tempChartInstance) tempChartInstance.dispose();
   if (humidityChartInstance) humidityChartInstance.dispose();
 });
@@ -418,10 +554,14 @@ onUnmounted(() => {
 .dashboard-display {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 80% 10%, rgba(58, 107, 181, 0.2), transparent 28%),
-    radial-gradient(circle at 10% 85%, rgba(45, 130, 82, 0.18), transparent 34%),
-    linear-gradient(138deg, #10233d 0%, #14304f 38%, #16334b 100%);
-  color: white;
+    radial-gradient(circle at 82% 8%, var(--layout-glow-right), transparent 30%),
+    radial-gradient(circle at 8% 86%, var(--layout-glow-left), transparent 34%),
+    linear-gradient(
+      138deg,
+      color-mix(in srgb, var(--bg-page) 82%, #112236) 0%,
+      color-mix(in srgb, var(--bg-surface) 84%, #17324a) 100%
+    );
+  color: var(--text-main);
   padding: 20px;
 }
 
@@ -430,9 +570,9 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 20px 30px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg-strong);
   border-radius: 14px;
-  border: 1px solid rgba(194, 219, 255, 0.18);
+  border: 1px solid var(--el-border-color-light);
   margin-bottom: 20px;
   backdrop-filter: blur(14px);
 }
@@ -446,13 +586,28 @@ onUnmounted(() => {
 
 .top-info {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 30px;
   font-size: 18px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-tertiary);
+}
+
+.top-info span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--el-fill-color-light) 60%, transparent);
+  border: 1px solid var(--el-border-color-light);
 }
 
 .status-alert {
   margin-bottom: 16px;
+}
+
+.status-alert :deep(.el-alert) {
+  background: var(--glass-bg);
+  border: 1px solid var(--el-border-color-light);
+  color: var(--text-main);
 }
 
 .main-content {
@@ -469,14 +624,14 @@ onUnmounted(() => {
 }
 
 .data-card {
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--glass-bg);
   border-radius: 16px;
   padding: 24px;
   display: flex;
   align-items: center;
   gap: 20px;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(188, 223, 255, 0.16);
+  border: 1px solid var(--el-border-color-light);
   transition: transform 0.24s ease, box-shadow 0.24s ease;
 }
 
@@ -495,7 +650,7 @@ onUnmounted(() => {
 
 .card-label {
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
@@ -509,15 +664,15 @@ onUnmounted(() => {
   margin-left: 4px;
 }
 
-.data-card.temp { background: linear-gradient(135deg, rgba(245, 108, 108, 0.3), rgba(245, 108, 108, 0.1)); }
-.data-card.humidity { background: linear-gradient(135deg, rgba(64, 158, 255, 0.3), rgba(64, 158, 255, 0.1)); }
-.data-card.soil { background: linear-gradient(135deg, rgba(103, 194, 58, 0.3), rgba(103, 194, 58, 0.1)); }
-.data-card.light { background: linear-gradient(135deg, rgba(230, 162, 60, 0.3), rgba(230, 162, 60, 0.1)); }
+.data-card.temp { background: linear-gradient(135deg, color-mix(in srgb, var(--el-color-danger) 22%, transparent), color-mix(in srgb, var(--el-color-danger) 10%, transparent)); }
+.data-card.humidity { background: linear-gradient(135deg, color-mix(in srgb, var(--el-color-primary) 22%, transparent), color-mix(in srgb, var(--el-color-primary) 10%, transparent)); }
+.data-card.soil { background: linear-gradient(135deg, color-mix(in srgb, var(--el-color-success) 22%, transparent), color-mix(in srgb, var(--el-color-success) 10%, transparent)); }
+.data-card.light { background: linear-gradient(135deg, color-mix(in srgb, var(--el-color-warning) 22%, transparent), color-mix(in srgb, var(--el-color-warning) 10%, transparent)); }
 
-.temp .card-value { color: #f56c6c; }
-.humidity .card-value { color: #409EFF; }
-.soil .card-value { color: #67C23A; }
-.light .card-value { color: #E6A23C; }
+.temp .card-value { color: var(--el-color-danger); }
+.humidity .card-value { color: var(--el-color-primary); }
+.soil .card-value { color: var(--el-color-success); }
+.light .card-value { color: var(--el-color-warning); }
 
 /* 第二行 */
 .second-row {
@@ -533,7 +688,9 @@ onUnmounted(() => {
 }
 
 .chart-box {
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--bg-card);
+  border: 1px solid var(--el-border-color-light);
+  box-shadow: var(--shadow-soft);
   border-radius: 12px;
   padding: 16px;
   height: 250px;
@@ -545,9 +702,9 @@ onUnmounted(() => {
 }
 
 .device-status {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg-strong);
   border-radius: 14px;
-  border: 1px solid rgba(188, 223, 255, 0.16);
+  border: 1px solid var(--el-border-color-light);
   padding: 20px;
   backdrop-filter: blur(12px);
 }
@@ -569,14 +726,14 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--el-fill-color-light) 56%, transparent);
   border-radius: 8px;
   transition: all 0.3s;
 }
 
 .status-item.active {
-  background: rgba(103, 194, 58, 0.2);
-  border: 1px solid #67C23A;
+  background: color-mix(in srgb, var(--el-color-success) 18%, transparent);
+  border: 1px solid var(--el-color-success);
 }
 
 .status-icon {
@@ -594,7 +751,7 @@ onUnmounted(() => {
 }
 
 .status-item.active .status-value {
-  color: #67C23A;
+  color: var(--el-color-success);
 }
 
 .plants-section h3 {
@@ -612,7 +769,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--el-fill-color-light) 56%, transparent);
   border-radius: 6px;
   font-size: 14px;
 }
@@ -622,20 +779,20 @@ onUnmounted(() => {
 }
 
 .plant-records {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
 }
 
 .empty-text {
   text-align: center;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-tertiary);
   padding: 20px;
 }
 
 /* 第三行 */
 .third-row {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg-strong);
   border-radius: 14px;
-  border: 1px solid rgba(188, 223, 255, 0.16);
+  border: 1px solid var(--el-border-color-light);
   padding: 20px;
   backdrop-filter: blur(12px);
 }
@@ -660,7 +817,7 @@ onUnmounted(() => {
 .timeline-dot {
   width: 12px;
   height: 12px;
-  background: #409EFF;
+  background: var(--el-color-primary);
   border-radius: 50%;
   margin-top: 8px;
   flex-shrink: 0;
@@ -668,7 +825,7 @@ onUnmounted(() => {
 
 .timeline-content {
   flex: 1;
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--el-fill-color-light) 56%, transparent);
   border-radius: 8px;
   padding: 12px;
 }
@@ -682,12 +839,12 @@ onUnmounted(() => {
 
 .plant-tag {
   font-weight: 500;
-  color: #409EFF;
+  color: var(--el-color-primary);
 }
 
 .timeline-header .time {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-tertiary);
 }
 
 .timeline-body {
@@ -700,18 +857,19 @@ onUnmounted(() => {
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 12px;
+  color: var(--text-main);
 }
 
-.stage-seed { background: #909399; }
-.stage-sprout { background: #67C23A; }
-.stage-seedling { background: #67C23A; }
-.stage-flowering { background: #E6A23C; }
-.stage-fruiting { background: #F56C6C; }
-.stage-harvested { background: #67C23A; }
+.stage-seed { background: color-mix(in srgb, var(--text-tertiary) 26%, transparent); }
+.stage-sprout { background: color-mix(in srgb, var(--el-color-success) 24%, transparent); }
+.stage-seedling { background: color-mix(in srgb, var(--el-color-success) 24%, transparent); }
+.stage-flowering { background: color-mix(in srgb, var(--el-color-warning) 24%, transparent); }
+.stage-fruiting { background: color-mix(in srgb, var(--el-color-danger) 24%, transparent); }
+.stage-harvested { background: color-mix(in srgb, var(--el-color-success) 24%, transparent); }
 
 .data-tag {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
 }
 
 /* 全屏按钮 */
@@ -720,8 +878,8 @@ onUnmounted(() => {
   bottom: 30px;
   right: 30px;
   padding: 12px 24px;
-  background: rgba(64, 158, 255, 0.8);
-  color: white;
+  background: color-mix(in srgb, var(--el-color-primary) 84%, transparent);
+  color: var(--el-color-white);
   border: none;
   border-radius: 8px;
   font-size: 16px;
@@ -731,8 +889,55 @@ onUnmounted(() => {
 }
 
 .fullscreen-btn:hover {
-  background: rgba(64, 158, 255, 1);
+  background: var(--el-color-primary);
   transform: scale(1.05);
+}
+
+@supports not (color: color-mix(in srgb, #000 50%, #fff)) {
+  .dashboard-display {
+    background:
+      radial-gradient(circle at 82% 8%, var(--layout-glow-right), transparent 30%),
+      radial-gradient(circle at 8% 86%, var(--layout-glow-left), transparent 34%),
+      linear-gradient(138deg, var(--bg-page) 0%, var(--bg-surface) 100%);
+  }
+
+  .top-info span,
+  .status-item,
+  .plant-item,
+  .timeline-content {
+    background: var(--el-fill-color-light);
+  }
+
+  .status-item.active {
+    background: rgba(59, 167, 107, 0.18);
+  }
+
+  .data-card.temp {
+    background: linear-gradient(135deg, rgba(226, 100, 95, 0.22), rgba(226, 100, 95, 0.1));
+  }
+
+  .data-card.humidity {
+    background: linear-gradient(135deg, rgba(64, 158, 255, 0.22), rgba(64, 158, 255, 0.1));
+  }
+
+  .data-card.soil {
+    background: linear-gradient(135deg, rgba(103, 194, 58, 0.22), rgba(103, 194, 58, 0.1));
+  }
+
+  .data-card.light {
+    background: linear-gradient(135deg, rgba(230, 162, 60, 0.22), rgba(230, 162, 60, 0.1));
+  }
+
+  .stage-seed { background: rgba(131, 148, 136, 0.25); }
+  .stage-sprout { background: rgba(59, 167, 107, 0.24); }
+  .stage-seedling { background: rgba(59, 167, 107, 0.24); }
+  .stage-flowering { background: rgba(243, 183, 79, 0.24); }
+  .stage-fruiting { background: rgba(226, 100, 95, 0.24); }
+  .stage-harvested { background: rgba(59, 167, 107, 0.24); }
+
+  .fullscreen-btn {
+    background: var(--el-color-primary);
+  }
 }
 
 @media (max-width: 1200px) {

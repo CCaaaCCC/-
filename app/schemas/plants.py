@@ -37,6 +37,8 @@ class PlantProfileResponse(PlantProfileBase):
     class_name: str | None = None
     device_name: str | None = None
     group_name: str | None = None
+    created_by: int | None = None
+    can_manage: bool = False
     growth_record_count: int = 0
     created_at: datetime.datetime | None = None
 
@@ -72,3 +74,9 @@ class GrowthRecordResponse(GrowthRecordBase):
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PlantMigrateRequest(BaseModel):
+    target_class_id: int
+    target_group_id: int | None = None
+    target_device_id: int | None = None

@@ -1,218 +1,103 @@
-# 项目结构整理说明
+# 项目结构与设计说明
 
 ## 目标
 
 - 保持现有 API 行为与路径不变
-- 降低 `main.py` 与其他模块的耦合
-- 统一依赖注入与安全能力的复用入口
+- 提升前端可用性与跨环境访问稳定性
+- 统一视觉规范，降低样式维护成本
 
-## 本次调整
+## 本轮关键调整（2026-04-12）
 
-### 1) 后端拆分
+### 1) 前端访问稳定性修复
 
-- 新增 `app/api/routes/auth.py`
-  - `POST /token`
-  - `POST /api/auth/logout`
+- 修改 `frontend/vite.config.ts`
+  - `server.host = '0.0.0.0'`
+  - `server.port = 5173`
+  - `server.strictPort = true`
 
-- 新增 `app/api/routes/telemetry.py`
-  - `POST /api/telemetry`
-  - `GET /api/devices`
-  - `POST /api/devices`
-  - `POST /api/control/{device_id}`
-  - `POST /api/demo/scenario/{device_id}`
-  - `POST /api/ai/science-assistant`
-  - `WS /ws/telemetry/{device_id}`
-  - `POST /api/telemetry/export`
-  - `GET /api/public/display`
+效果：开发环境下可同时通过 `localhost:5173` 与 `127.0.0.1:5173` 访问，避免“浏览器打不开页面”问题。
 
-- 新增 `app/api/routes/content.py`
-  - `GET /api/content/categories`
-  - `GET /api/content/categories/tree`
-  - `POST /api/content/categories`
-  - `PUT /api/content/categories/{category_id}`
-  - `DELETE /api/content/categories/{category_id}`
-  - `GET /api/content/contents`
-  - `GET /api/content/contents/{content_id}`
-  - `POST /api/content/contents`
-  - `PUT /api/content/contents/{content_id}`
-  - `DELETE /api/content/contents/{content_id}`
-  - `POST /api/content/contents/{content_id}/publish`
-  - `GET /api/content/my-learning`
-  - `POST /api/content/contents/{content_id}/start`
-  - `POST /api/content/contents/{content_id}/complete`
-  - `PUT /api/content/contents/{content_id}/progress`
-  - `GET /api/content/contents/{content_id}/comments`
-  - `POST /api/content/contents/{content_id}/comments`
-  - `PUT /api/content/comments/{comment_id}`
-  - `GET /api/content/stats/overview`
-  - `GET /api/content/stats/students`
-  - `GET /api/content/stats/content/{content_id}`
+### 2) AI 助手样式维护优化
 
-- 新增 `app/api/routes/users.py`
-  - `GET /api/users`
-  - `POST /api/users`
-  - `GET /api/users/{user_id}`
-  - `PUT /api/users/{user_id}`
-  - `DELETE /api/users/{user_id}`
-  - `POST /api/users/{user_id}/reset-password`
-  - `POST /api/users/{user_id}/toggle-active`
-  - `GET /api/stats/users`
-  - `POST /api/users/batch-create`
-  - `POST /api/users/batch-delete`
-  - `POST /api/users/batch-update-class`
-  - `POST /api/users/batch-reset-password`
-  - `POST /api/users/import`
-  - `GET /api/users/export`
-  - `GET /api/classes`
-  - `POST /api/classes`
-  - `PUT /api/classes/{class_id}`
-  - `DELETE /api/classes/{class_id}`
-  - `GET /api/classes/{class_id}/students`
-  - `GET /api/classes/{class_id}/devices`
-  - `POST /api/classes/{class_id}/devices/bind`
-  - `DELETE /api/classes/{class_id}/devices/unbind/{bind_id}`
-  - `GET /api/students/{student_id}/device`
+- 清理 `frontend/src/components/FloatingAIAssistant.vue` 中重复的 `style scoped` 块
+- 合并“思考过程”面板样式，统一维护单一来源
 
-- 新增 `app/api/routes/assignments.py`
-  - `GET /api/assignments`
-  - `GET /api/assignments/{assignment_id}`
-  - `POST /api/assignments/{assignment_id}/publish`
-  - `POST /api/assignments`
-  - `PUT /api/assignments/{assignment_id}`
-  - `DELETE /api/assignments/{assignment_id}`
-  - `GET /api/assignments/{assignment_id}/submissions`
-  - `GET /api/assignments/{assignment_id}/my-submission`
-  - `POST /api/assignments/{assignment_id}/submit`
-  - `POST /api/assignments/{assignment_id}/grade`
+效果：减少样式覆盖冲突风险，后续迭代更稳定。
 
-- 新增 `app/api/routes/logs.py`
-  - `GET /api/logs/operations`
-  - `POST /api/logs/operations/export`
+### 3) 主题变量补齐
 
-- 新增 `app/core/security.py`
-  - `pwd_context`
-  - `oauth2_scheme`
-  - `create_access_token`
+- 在 `frontend/src/styles/theme.css` 增加布局变量：
+  - `--layout-max-width`
+  - `--layout-wide-max-width`
+  - `--layout-gutter`
 
-- 新增 `app/api/dependencies.py`
-  - `get_db`
-  - `get_current_user`
-  - `get_user_by_token`
-  - `token_blacklist`
+效果：与页面组件中的布局变量使用保持一致，避免样式回退与布局异常。
 
-- 新增 `app/schemas/plants.py`
-  - `GrowthRecordCreateRequest`
+### 4) AI 助手会话化改造
 
-- 新增 `app/schemas/auth.py`
-  - `Token`
+- 后端新增会话持久化模型：
+  - `app/db/models.py`
+  - `AIConversation`
+  - `AIConversationMessage`
+- 后端新增会话化接口：
+  - `GET /api/ai/conversations`
+  - `POST /api/ai/conversations`
+  - `GET /api/ai/conversations/{conversation_id}`
+  - `PATCH /api/ai/conversations/{conversation_id}/title`
+  - `DELETE /api/ai/conversations/{conversation_id}`
+  - `POST /api/ai/conversations/{conversation_id}/science-assistant`
+  - `POST /api/ai/conversations/{conversation_id}/science-assistant/stream`
+- 后端迁移脚本：
+  - `alembic/versions/0004_ai_conversation_history.py`
+- 前端会话化 UI：
+  - `frontend/src/components/FloatingAIAssistant.vue`
+  - 支持新建、切换、重命名、删除会话
+  - 流式生成期间禁止会话切换
+- 前端 API 封装：
+  - `frontend/src/api/index.ts`
+  - 新增会话 CRUD 与会话内问答/流式接口封装
 
-- 新增 `app/schemas/telemetry.py`
-  - `TelemetryData/TelemetryResponse`
-  - `DeviceCreateRequest/DeviceResponse`
-  - `ControlRequest`
-  - `DemoScenarioRequest`
-  - `AIScienceAskRequest/AIScienceAskResponse`
-  - `ExportRequest`
+效果：AI 助手从“单次问答”升级为“用户私有的可持续对话”，并保留旧接口兼容现有调用。
 
-- 新增 `app/schemas/content.py`
-  - `ContentCategory*`
-  - `TeachingContent*`
-  - `StudentLearningRecord*`
-  - `ContentComment*`
-  - `LearningStats`
-  - `StudentProgress`
+### 5) 三模块角色分层改造（A->D）
 
-- 新增 `app/schemas/users.py`
-  - `User*`
-  - `Class*`
-  - `ClassDeviceBind*`
-  - `UserStats`
-  - `Batch*Request`
+- 后端权限与数据层：
+  - 新增所有权字段：
+    - `plant_profiles.created_by`
+    - `study_groups.created_by`
+  - 教师在 Plants / Groups / Assignments 中具备“全校可读”能力。
+  - 教师写操作收敛为“仅本人创建资源可写”；`created_by` 为空的历史数据仅管理员可写。
+  - 管理员新增系统级接口：
+    - `POST /api/admin/plants/{plant_id}/migrate`
+    - `POST /api/admin/groups/{group_id}/migrate`
+    - `POST /api/admin/groups/{group_id}/members/batch-role`
 
-- 新增 `app/schemas/assignments.py`
-  - `Assignment*`
-  - `AssignmentSubmission*`
-  - `AssignmentPublishRequest`
+- 前端路由与页面结构：
+  - 三个核心模块由“单页面”升级为“角色分发入口 + 角色壳组件”：
+    - `frontend/src/views/Assignments/index.vue`
+    - `frontend/src/views/Plants/index.vue`
+    - `frontend/src/views/Groups/index.vue`
+  - 每个模块均拆出：
+    - `Admin*.vue`
+    - `Teacher*.vue`
+    - `Student*.vue`
+  - 旧页面保留为共享业务页，由角色壳组件装配，减少重写风险。
 
-- 新增 `app/schemas/groups.py`
-  - `StudyGroup*`
-  - `GroupMember*`
+- 前端行为变化：
+  - 教师查看非本人资源时明确显示“只读”状态。
+  - 管理员在 Plants/Groups 页面可直接执行迁移与批量修正。
 
-- 新增 `app/schemas/profile.py`
-  - `UserTodoStats`
-  - `UserProfileResponse`
+效果：实现“同一路由下按角色差异化界面与权限行为”，同时保证后端权限与前端交互一致。
 
-- 调整 `app/schemas/plants.py`
-  - 补齐 `PlantProfile*`
-  - 补齐 `GrowthRecordResponse`
+## 视觉与交互规范（Scheme A）
 
-- 新增 `app/services/telemetry_hub_service.py`
-  - `TelemetryHub`
+- 毛玻璃布局：左侧固定导航 + 主内容沉浸式背景
+- 统一圆角与阴影层级：减少组件风格碎片化
+- AI 面板：支持“深度思考”折叠展示，强调可解释性
 
-- 新增 `app/services/ai_science_service.py`
-  - `build_rule_based_science_answer`
-  - `ask_qwen_science_assistant`
+## 文档索引
 
-### 2) 路由解耦
-
-以下文件已不再依赖 `from main import ...`：
-
-- `app/api/routes/profile.py`
-- `app/api/routes/history.py`
-- `app/api/routes/plants.py`
-- `app/api/routes/groups.py`
-
-统一改为从 `app/api/dependencies.py` 和 `app/schemas/*` 导入。
-
-## 当前建议目录（后端）
-
-```text
-app/
-  api/
-    dependencies.py
-    routes/
-      auth.py
-      content.py
-      users.py
-      assignments.py
-      telemetry.py
-      groups.py
-      history.py
-      plants.py
-      profile.py
-  core/
-    config.py
-    permission.py
-    security.py
-  db/
-    base.py
-    models.py
-    session.py
-  schemas/
-    auth.py
-    content.py
-    users.py
-    assignments.py
-    plants.py
-    telemetry.py
-  services/
-    ai_science_service.py
-    groups_service.py
-    history_service.py
-    plants_service.py
-    profile_service.py
-    telemetry_hub_service.py
-```
-
-## 验证结果
-
-- 静态错误检查通过
-- 前端构建通过：`npm run build`
-- 本地后端导入受环境依赖影响（缺少 `python-jose`）
-- 现有接口路径未变（兼容现有前端调用）
-
-## 后续可继续拆分（建议）
-
-- 将 `main.py` 中剩余 Pydantic 模型继续分拆到 `app/schemas/`（按域划分）
-- 将 `main.py` 中剩余业务路由继续下沉到 `app/api/routes/`
-- 保留 `main.py` 仅作为应用装配入口（app factory / router include / middleware）
+- 总览与运行：`README.md`
+- 维护手册：`docs/MAINTENANCE_GUIDE.md`
+- 部署与演示：`DEPLOY_AND_DEMO.md`
+- 角色分层改造专项：`docs/ROLE_UI_REFACTOR_PLAN.md`

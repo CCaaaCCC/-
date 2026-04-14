@@ -1,24 +1,43 @@
 import csv
 import datetime
 import io
+import json
 import logging
 import re
+import time
 import urllib.parse
 from typing import List
 
 import pandas as pd
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc
+from sqlalchemy import desc, inspect
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_admin_user, get_current_user, get_db, get_teacher_user, get_user_by_token
 from app.core.config import settings
 from app.core.permission import get_allowed_device_ids, require_can_access_device_history
-from app.db.models import Class, ClassDeviceBind, Device, GrowthRecord, PlantProfile, SensorReading, User
+from app.db.models import (
+    AIConversation,
+    AIConversationMessage,
+    Class,
+    ClassDeviceBind,
+    Device,
+    GrowthRecord,
+    PlantProfile,
+    SensorReading,
+    User,
+)
 from app.db.session import SessionLocal
 from app.schemas.telemetry import (
+    AIConversationAskRequest,
+    AIConversationCreateRequest,
+    AIConversationDetailResponse,
+    AIConversationMessageResponse,
+    AIConversationPinRequest,
+    AIConversationRenameRequest,
+    AIConversationSummaryResponse,
     AIScienceAskRequest,
     AIScienceAskResponse,
     ControlRequest,
@@ -29,12 +48,200 @@ from app.schemas.telemetry import (
     TelemetryData,
     TelemetryResponse,
 )
-from app.services.ai_science_service import ask_qwen_science_assistant
+from app.services.ai_science_service import (
+    align_citations_with_answer,
+    ask_science_assistant,
+    generate_conversation_title,
+    stream_science_assistant_with_source,
+)
+from app.services.ai_science_service import SOURCE_RULE_BASED, build_rule_based_science_answer
+from app.services.ai_audit_service import infer_fallback_reason, record_ai_audit
 from app.services.telemetry_hub_service import TelemetryHub
 
 
 router = APIRouter()
 telemetry_hub = TelemetryHub()
+logger = logging.getLogger(__name__)
+DEFAULT_CONVERSATION_TITLE = "新对话"
+
+
+def _ensure_ai_conversation_schema_ready(db: Session) -> None:
+    try:
+        bind = db.get_bind()
+        inspector = inspect(bind)
+        tables = set(inspector.get_table_names())
+        required = {"ai_conversations", "ai_conversation_messages"}
+        missing = sorted(required - tables)
+        if missing:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI 会话功能尚未初始化，请先执行数据库迁移："
+                    "python -m alembic upgrade head"
+                ),
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("failed to inspect ai conversation schema: %s", exc)
+
+
+def _resolve_latest_reading_for_ai(
+    db: Session,
+    current_user: User,
+    request: AIScienceAskRequest | AIConversationAskRequest,
+) -> SensorReading | None:
+    if request.device_id:
+        device = db.query(Device).filter(Device.id == request.device_id).first()
+        if not device:
+            raise HTTPException(status_code=404, detail="设备不存在")
+
+        require_can_access_device_history(db, current_user, request.device_id)
+        return (
+            db.query(SensorReading)
+            .filter(SensorReading.device_id == request.device_id)
+            .order_by(desc(SensorReading.timestamp))
+            .first()
+        )
+
+    if current_user.role == "admin":
+        return db.query(SensorReading).order_by(desc(SensorReading.timestamp)).first()
+
+    class_ids: List[int] = []
+    if current_user.role == "student" and current_user.class_id:
+        class_ids = [current_user.class_id]
+    elif current_user.role == "teacher":
+        class_ids = [c.id for c in db.query(Class).filter(Class.teacher_id == current_user.id).all()]
+
+    if not class_ids:
+        return None
+
+    bind = (
+        db.query(ClassDeviceBind)
+        .filter(ClassDeviceBind.class_id.in_(class_ids))
+        .order_by(desc(ClassDeviceBind.id))
+        .first()
+    )
+    if not bind:
+        return None
+
+    return (
+        db.query(SensorReading)
+        .filter(SensorReading.device_id == bind.device_id)
+        .order_by(desc(SensorReading.timestamp))
+        .first()
+    )
+
+
+def _normalize_conversation_title(title: str | None) -> str:
+    normalized = re.sub(r"\s+", " ", (title or "").strip())
+    if not normalized:
+        return DEFAULT_CONVERSATION_TITLE
+    return normalized[:120]
+
+
+def _get_conversation_or_404(db: Session, current_user: User, conversation_id: int) -> AIConversation:
+    conversation = (
+        db.query(AIConversation)
+        .filter(
+            AIConversation.id == conversation_id,
+            AIConversation.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return conversation
+
+
+def _serialize_citations(citations: list[dict[str, str]] | None) -> str | None:
+    if not citations:
+        return None
+    try:
+        return json.dumps(citations, ensure_ascii=False)
+    except Exception:
+        return None
+
+
+def _parse_citations(citations_json: str | None) -> list[dict[str, str]]:
+    if not citations_json:
+        return []
+    try:
+        parsed = json.loads(citations_json)
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    except Exception:
+        return []
+    return []
+
+
+def _message_to_response(message: AIConversationMessage) -> AIConversationMessageResponse:
+    return AIConversationMessageResponse(
+        id=message.id,
+        role=str(message.role),
+        content=message.content,
+        reasoning=message.reasoning,
+        source=message.source,
+        model=message.model,
+        citations=_parse_citations(message.citations_json),
+        web_search_notice=message.web_search_notice,
+        status=str(message.status or "done"),
+        created_at=message.created_at,
+    )
+
+
+def _load_conversation_history(db: Session, conversation_id: int, max_turns: int = 10) -> list[dict[str, str]]:
+    rows = (
+        db.query(AIConversationMessage)
+        .filter(AIConversationMessage.conversation_id == conversation_id)
+        .order_by(desc(AIConversationMessage.created_at), desc(AIConversationMessage.id))
+        .limit(max_turns * 2)
+        .all()
+    )
+
+    history: list[dict[str, str]] = []
+    for item in reversed(rows):
+        content = (item.content or "").strip()
+        if item.role not in {"user", "assistant"}:
+            continue
+        if item.status != "done" or not content:
+            continue
+        history.append(
+            {
+                "role": item.role,
+                "content": content[:500],
+            }
+        )
+    return history[-max_turns:]
+
+
+def _build_conversation_summary(db: Session, conversation: AIConversation) -> AIConversationSummaryResponse:
+    message_count = (
+        db.query(AIConversationMessage)
+        .filter(AIConversationMessage.conversation_id == conversation.id)
+        .count()
+    )
+    latest_message = (
+        db.query(AIConversationMessage)
+        .filter(AIConversationMessage.conversation_id == conversation.id)
+        .order_by(desc(AIConversationMessage.created_at), desc(AIConversationMessage.id))
+        .first()
+    )
+    preview = None
+    if latest_message and latest_message.content:
+        preview = re.sub(r"\s+", " ", latest_message.content.strip())[:80]
+
+    return AIConversationSummaryResponse(
+        id=conversation.id,
+        title=conversation.title,
+        is_pinned=bool(conversation.is_pinned),
+        pinned_at=conversation.pinned_at,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        last_message_at=conversation.last_message_at,
+        message_count=message_count,
+        preview=preview,
+    )
 
 
 @router.post("/api/telemetry")
@@ -96,6 +303,9 @@ async def receive_telemetry(
         }
     except OperationalError:
         raise HTTPException(status_code=500, detail="数据库连接失败")
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
         raise HTTPException(status_code=400, detail="遥测数据处理失败，请检查上报格式")
@@ -295,39 +505,613 @@ async def trigger_demo_scenario(
     }
 
 
+@router.get("/api/ai/conversations", response_model=list[AIConversationSummaryResponse])
+async def list_ai_conversations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversations = (
+        db.query(AIConversation)
+        .filter(AIConversation.user_id == current_user.id)
+        .order_by(
+            desc(AIConversation.is_pinned),
+            desc(AIConversation.pinned_at),
+            desc(AIConversation.last_message_at),
+            desc(AIConversation.updated_at),
+            desc(AIConversation.id),
+        )
+        .all()
+    )
+    return [_build_conversation_summary(db, item) for item in conversations]
+
+
+@router.post("/api/ai/conversations", response_model=AIConversationSummaryResponse)
+async def create_ai_conversation(
+    request: AIConversationCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversation = AIConversation(
+        user_id=current_user.id,
+        title=_normalize_conversation_title(request.title),
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    return _build_conversation_summary(db, conversation)
+
+
+@router.get("/api/ai/conversations/{conversation_id}", response_model=AIConversationDetailResponse)
+async def get_ai_conversation_detail(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversation = _get_conversation_or_404(db, current_user, conversation_id)
+    messages = (
+        db.query(AIConversationMessage)
+        .filter(AIConversationMessage.conversation_id == conversation.id)
+        .order_by(AIConversationMessage.created_at, AIConversationMessage.id)
+        .all()
+    )
+    return AIConversationDetailResponse(
+        id=conversation.id,
+        title=conversation.title,
+        is_pinned=bool(conversation.is_pinned),
+        pinned_at=conversation.pinned_at,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        last_message_at=conversation.last_message_at,
+        messages=[_message_to_response(item) for item in messages],
+    )
+
+
+@router.patch("/api/ai/conversations/{conversation_id}/title", response_model=AIConversationSummaryResponse)
+async def rename_ai_conversation(
+    conversation_id: int,
+    request: AIConversationRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversation = _get_conversation_or_404(db, current_user, conversation_id)
+    conversation.title = _normalize_conversation_title(request.title)
+    conversation.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(conversation)
+    return _build_conversation_summary(db, conversation)
+
+
+@router.patch("/api/ai/conversations/{conversation_id}/pin", response_model=AIConversationSummaryResponse)
+async def pin_ai_conversation(
+    conversation_id: int,
+    request: AIConversationPinRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversation = _get_conversation_or_404(db, current_user, conversation_id)
+
+    conversation.is_pinned = bool(request.is_pinned)
+    conversation.pinned_at = datetime.datetime.utcnow() if conversation.is_pinned else None
+    conversation.updated_at = datetime.datetime.utcnow()
+
+    db.commit()
+    db.refresh(conversation)
+    return _build_conversation_summary(db, conversation)
+
+
+@router.delete("/api/ai/conversations/{conversation_id}")
+async def delete_ai_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversation = _get_conversation_or_404(db, current_user, conversation_id)
+    db.delete(conversation)
+    db.commit()
+    return {"status": "success"}
+
+
+@router.post("/api/ai/conversations/{conversation_id}/science-assistant", response_model=AIScienceAskResponse)
+async def ask_ai_science_assistant_in_conversation(
+    conversation_id: int,
+    request: AIConversationAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversation = _get_conversation_or_404(db, current_user, conversation_id)
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    start_ts = time.perf_counter()
+    latest = _resolve_latest_reading_for_ai(db, current_user, request)
+    conversation_history = _load_conversation_history(db, conversation.id)
+    is_first_question = len(conversation_history) == 0
+    selected_model = settings.ai_reasoner_model if request.enable_deep_thinking else settings.ai_chat_model
+
+    db.add(
+        AIConversationMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=question,
+            status="done",
+        )
+    )
+
+    try:
+        answer, source, response_meta = await ask_science_assistant(
+            question,
+            latest,
+            conversation_history=conversation_history,
+            user_role=current_user.role,
+            enable_deep_thinking=request.enable_deep_thinking,
+            enable_web_search=request.enable_web_search,
+        )
+    except Exception as exc:
+        logger.exception("ask_ai_science_assistant_in_conversation fallback to rule-based: %s", exc)
+        answer = build_rule_based_science_answer(question, latest, user_role=current_user.role)
+        source = SOURCE_RULE_BASED
+        response_meta = {
+            "model": selected_model,
+            "deep_thinking": request.enable_deep_thinking,
+            "web_search_enabled": request.enable_web_search,
+            "web_search_used": False,
+            "web_search_notice": (
+                "暂未获取到实时来源，已自动提供通用回答。" if request.enable_web_search else None
+            ),
+            "citations": [],
+        }
+
+    db.add(
+        AIConversationMessage(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=answer,
+            reasoning=None,
+            source=source,
+            model=str(response_meta.get("model") or selected_model),
+            citations_json=_serialize_citations(response_meta.get("citations") or []),
+            web_search_notice=response_meta.get("web_search_notice"),
+            status="done",
+        )
+    )
+
+    if is_first_question and conversation.title == DEFAULT_CONVERSATION_TITLE:
+        conversation.title = _normalize_conversation_title(await generate_conversation_title(question))
+
+    now = datetime.datetime.utcnow()
+    conversation.last_message_at = now
+    conversation.updated_at = now
+    db.commit()
+
+    latency_ms = int((time.perf_counter() - start_ts) * 1000)
+    record_ai_audit(
+        operator_id=current_user.id,
+        operation_type="ai_science",
+        source=source,
+        latency_ms=latency_ms,
+        prompt_text=question,
+        output_text=answer,
+        fallback_reason=infer_fallback_reason(source),
+        extra={
+            "conversation_id": conversation.id,
+            "device_id": request.device_id,
+            "model": response_meta.get("model"),
+            "deep_thinking": bool(response_meta.get("deep_thinking")),
+            "web_search_enabled": bool(response_meta.get("web_search_enabled")),
+            "web_search_used": bool(response_meta.get("web_search_used")),
+            "citations_count": len(response_meta.get("citations") or []),
+        },
+    )
+
+    return AIScienceAskResponse(
+        answer=answer,
+        source=source,
+        model=str(response_meta.get("model") or selected_model),
+        deep_thinking=bool(response_meta.get("deep_thinking")),
+        web_search_enabled=bool(response_meta.get("web_search_enabled")),
+        web_search_used=bool(response_meta.get("web_search_used")),
+        web_search_notice=response_meta.get("web_search_notice"),
+        citations=response_meta.get("citations") or [],
+    )
+
+
+@router.post("/api/ai/conversations/{conversation_id}/science-assistant/stream")
+async def stream_ai_science_assistant_in_conversation(
+    conversation_id: int,
+    request: AIConversationAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_ai_conversation_schema_ready(db)
+    conversation = _get_conversation_or_404(db, current_user, conversation_id)
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    latest = _resolve_latest_reading_for_ai(db, current_user, request)
+    conversation_history = _load_conversation_history(db, conversation.id)
+    is_first_question = len(conversation_history) == 0
+    selected_model = settings.ai_reasoner_model if request.enable_deep_thinking else settings.ai_chat_model
+
+    db.add(
+        AIConversationMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=question,
+            status="done",
+        )
+    )
+    conversation.last_message_at = datetime.datetime.utcnow()
+    conversation.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    async def event_generator():
+        start_ts = time.perf_counter()
+        source_used = "unknown"
+        sent_meta = False
+        output_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        stream_error: str | None = None
+        response_meta: dict[str, object] = {
+            "model": selected_model,
+            "deep_thinking": request.enable_deep_thinking,
+            "web_search_enabled": request.enable_web_search,
+            "web_search_used": False,
+            "web_search_notice": None,
+            "citations": [],
+        }
+
+        try:
+            async for chunk_dict, chunk_source, chunk_meta in stream_science_assistant_with_source(
+                question,
+                latest,
+                conversation_history=conversation_history,
+                user_role=current_user.role,
+                enable_deep_thinking=request.enable_deep_thinking,
+                enable_web_search=request.enable_web_search,
+            ):
+                source_used = chunk_source
+                if chunk_meta:
+                    response_meta = chunk_meta
+                if not sent_meta:
+                    sent_meta = True
+                    meta_payload = {"source": source_used, **response_meta}
+                    yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
+
+                text_part = chunk_dict.get("text") or ""
+                reasoning_part = chunk_dict.get("reasoning") or ""
+
+                if text_part:
+                    output_parts.append(text_part)
+                if reasoning_part:
+                    reasoning_parts.append(reasoning_part)
+
+                payload = {}
+                if text_part:
+                    payload["text"] = text_part
+                if reasoning_part:
+                    payload["reasoning"] = reasoning_part
+
+                if payload:
+                    yield f"event: token\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+            yield "event: done\ndata: {}\n\n"
+        except Exception as exc:
+            if output_parts:
+                source_used = "stream-error"
+                stream_error = "stream_failed_partial"
+                if not sent_meta:
+                    sent_meta = True
+                    meta_payload = {"source": source_used, **response_meta}
+                    yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
+                yield f"event: error\ndata: {json.dumps({'message': '连接中断，已保留已生成内容'}, ensure_ascii=False)}\n\n"
+                yield "event: done\ndata: {}\n\n"
+            else:
+                logger.exception("stream_ai_science_assistant_in_conversation fallback to rule-based: %s", exc)
+                source_used = SOURCE_RULE_BASED
+                stream_error = "stream_failed_fallback_rule_based"
+                fallback_answer = build_rule_based_science_answer(
+                    question,
+                    latest,
+                    user_role=current_user.role,
+                )
+                if request.enable_web_search:
+                    response_meta["web_search_notice"] = (
+                        "暂未获取到实时来源，已自动提供通用回答。"
+                    )
+                if not sent_meta:
+                    sent_meta = True
+                    meta_payload = {"source": source_used, **response_meta}
+                    yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
+                output_parts.append(fallback_answer)
+                yield f"event: token\ndata: {json.dumps({'text': fallback_answer}, ensure_ascii=False)}\n\n"
+                yield "event: done\ndata: {}\n\n"
+        finally:
+            final_answer = "".join(output_parts).strip()
+            final_reasoning = "".join(reasoning_parts).strip()
+
+            if bool(response_meta.get("web_search_enabled")) and final_answer:
+                aligned_answer, aligned_citations, aligned_notice = align_citations_with_answer(
+                    final_answer,
+                    list(response_meta.get("citations") or []),
+                    response_meta.get("web_search_notice"),
+                )
+                final_answer = aligned_answer
+                response_meta["citations"] = aligned_citations
+                response_meta["web_search_notice"] = aligned_notice
+                response_meta["web_search_used"] = bool(aligned_citations)
+
+            if final_answer:
+                db.add(
+                    AIConversationMessage(
+                        conversation_id=conversation.id,
+                        role="assistant",
+                        content=final_answer,
+                        reasoning=final_reasoning or None,
+                        source=source_used,
+                        model=str(response_meta.get("model") or selected_model),
+                        citations_json=_serialize_citations(response_meta.get("citations") or []),
+                        web_search_notice=response_meta.get("web_search_notice"),
+                        status="done",
+                    )
+                )
+
+            if is_first_question and conversation.title == DEFAULT_CONVERSATION_TITLE:
+                conversation.title = _normalize_conversation_title(await generate_conversation_title(question))
+
+            now = datetime.datetime.utcnow()
+            conversation.last_message_at = now
+            conversation.updated_at = now
+
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("Failed to persist conversation stream result")
+
+            latency_ms = int((time.perf_counter() - start_ts) * 1000)
+            record_ai_audit(
+                operator_id=current_user.id,
+                operation_type="ai_stream",
+                source=source_used,
+                latency_ms=latency_ms,
+                prompt_text=question,
+                output_text=final_answer,
+                fallback_reason=infer_fallback_reason(source_used),
+                extra={
+                    "conversation_id": conversation.id,
+                    "device_id": request.device_id,
+                    "stream": True,
+                    "sent_meta": sent_meta,
+                    "chunk_count": len(output_parts),
+                    "stream_error": stream_error,
+                    "model": response_meta.get("model"),
+                    "deep_thinking": bool(response_meta.get("deep_thinking")),
+                    "web_search_enabled": bool(response_meta.get("web_search_enabled")),
+                    "web_search_used": bool(response_meta.get("web_search_used")),
+                    "citations_count": len(response_meta.get("citations") or []),
+                    "rag_enabled": settings.rag_enabled,
+                },
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/api/ai/science-assistant", response_model=AIScienceAskResponse)
 async def ask_ai_science_assistant(
     request: AIScienceAskRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    latest = None
-    if request.device_id:
-        latest = db.query(SensorReading).filter(SensorReading.device_id == request.device_id).order_by(desc(SensorReading.timestamp)).first()
-    else:
-        class_ids: List[int] = []
-        if current_user.role == "student" and current_user.class_id:
-            class_ids = [current_user.class_id]
-        elif current_user.role == "teacher":
-            class_ids = [c.id for c in db.query(Class).filter(Class.teacher_id == current_user.id).all()]
+    start_ts = time.perf_counter()
+    latest = _resolve_latest_reading_for_ai(db, current_user, request)
+    conversation_history = [item.model_dump() for item in request.conversation_history] if request.conversation_history else []
+    selected_model = settings.ai_reasoner_model if request.enable_deep_thinking else settings.ai_chat_model
+    try:
+        answer, source, response_meta = await ask_science_assistant(
+            request.question,
+            latest,
+            conversation_history=conversation_history,
+            user_role=current_user.role,
+            enable_deep_thinking=request.enable_deep_thinking,
+            enable_web_search=request.enable_web_search,
+        )
+    except Exception as exc:
+        logger.exception("ask_ai_science_assistant fallback to rule-based: %s", exc)
+        answer = build_rule_based_science_answer(request.question, latest, user_role=current_user.role)
+        source = SOURCE_RULE_BASED
+        response_meta = {
+            "model": selected_model,
+            "deep_thinking": request.enable_deep_thinking,
+            "web_search_enabled": request.enable_web_search,
+            "web_search_used": False,
+            "web_search_notice": (
+                "暂未获取到实时来源，已自动提供通用回答。" if request.enable_web_search else None
+            ),
+            "citations": [],
+        }
 
-        if class_ids:
-            bind = (
-                db.query(ClassDeviceBind)
-                .filter(ClassDeviceBind.class_id.in_(class_ids))
-                .order_by(desc(ClassDeviceBind.id))
-                .first()
+    latency_ms = int((time.perf_counter() - start_ts) * 1000)
+    record_ai_audit(
+        operator_id=current_user.id,
+        operation_type="ai_science",
+        source=source,
+        latency_ms=latency_ms,
+        prompt_text=request.question,
+        output_text=answer,
+        fallback_reason=infer_fallback_reason(source),
+        extra={
+            "device_id": request.device_id,
+            "model": response_meta.get("model"),
+            "deep_thinking": bool(response_meta.get("deep_thinking")),
+            "web_search_enabled": bool(response_meta.get("web_search_enabled")),
+            "web_search_used": bool(response_meta.get("web_search_used")),
+            "citations_count": len(response_meta.get("citations") or []),
+        },
+    )
+
+    return AIScienceAskResponse(
+        answer=answer,
+        source=source,
+        model=str(response_meta.get("model") or selected_model),
+        deep_thinking=bool(response_meta.get("deep_thinking")),
+        web_search_enabled=bool(response_meta.get("web_search_enabled")),
+        web_search_used=bool(response_meta.get("web_search_used")),
+        web_search_notice=response_meta.get("web_search_notice"),
+        citations=response_meta.get("citations") or [],
+    )
+
+
+@router.post("/api/ai/science-assistant/stream")
+async def stream_ai_science_assistant(
+    request: AIScienceAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    latest = _resolve_latest_reading_for_ai(db, current_user, request)
+    conversation_history = [item.model_dump() for item in request.conversation_history] if request.conversation_history else []
+    selected_model = settings.ai_reasoner_model if request.enable_deep_thinking else settings.ai_chat_model
+
+    async def event_generator():
+        start_ts = time.perf_counter()
+        source_used = "unknown"
+        sent_meta = False
+        output_parts: list[str] = []
+        stream_error: str | None = None
+        response_meta: dict[str, object] = {
+            "model": selected_model,
+            "deep_thinking": request.enable_deep_thinking,
+            "web_search_enabled": request.enable_web_search,
+            "web_search_used": False,
+            "web_search_notice": None,
+            "citations": [],
+        }
+
+        try:
+            async for chunk_dict, chunk_source, chunk_meta in stream_science_assistant_with_source(
+                request.question,
+                latest,
+                conversation_history=conversation_history,
+                user_role=current_user.role,
+                enable_deep_thinking=request.enable_deep_thinking,
+                enable_web_search=request.enable_web_search,
+            ):
+                source_used = chunk_source
+                if chunk_meta:
+                    response_meta = chunk_meta
+                if not sent_meta:
+                    sent_meta = True
+                    meta_payload = {"source": source_used, **response_meta}
+                    yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
+                
+                text_part = chunk_dict.get("text") or ""
+                reasoning_part = chunk_dict.get("reasoning") or ""
+                
+                output_parts.append(text_part)
+                
+                payload = {}
+                if text_part:
+                    payload["text"] = text_part
+                if reasoning_part:
+                    payload["reasoning"] = reasoning_part
+                    
+                if payload:
+                    yield f"event: token\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+            yield "event: done\ndata: {}\n\n"
+        except Exception as exc:
+            if output_parts:
+                source_used = "stream-error"
+                stream_error = "stream_failed_partial"
+                if not sent_meta:
+                    sent_meta = True
+                    meta_payload = {"source": source_used, **response_meta}
+                    yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
+                yield f"event: error\ndata: {json.dumps({'message': '连接中断，已保留已生成内容'}, ensure_ascii=False)}\n\n"
+                yield "event: done\ndata: {}\n\n"
+                return
+
+            logger.exception("stream_ai_science_assistant fallback to rule-based: %s", exc)
+            source_used = SOURCE_RULE_BASED
+            stream_error = "stream_failed_fallback_rule_based"
+            fallback_answer = build_rule_based_science_answer(
+                request.question,
+                latest,
+                user_role=current_user.role,
             )
-            if bind:
-                latest = (
-                    db.query(SensorReading)
-                    .filter(SensorReading.device_id == bind.device_id)
-                    .order_by(desc(SensorReading.timestamp))
-                    .first()
+            if request.enable_web_search:
+                response_meta["web_search_notice"] = (
+                    "暂未获取到实时来源，已自动提供通用回答。"
                 )
+            if not sent_meta:
+                sent_meta = True
+                meta_payload = {"source": source_used, **response_meta}
+                yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
+            output_parts.append(fallback_answer)
+            yield f"event: token\ndata: {json.dumps({'text': fallback_answer}, ensure_ascii=False)}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        finally:
+            final_answer = "".join(output_parts).strip()
+            if bool(response_meta.get("web_search_enabled")) and final_answer:
+                aligned_answer, aligned_citations, aligned_notice = align_citations_with_answer(
+                    final_answer,
+                    list(response_meta.get("citations") or []),
+                    response_meta.get("web_search_notice"),
+                )
+                final_answer = aligned_answer
+                response_meta["citations"] = aligned_citations
+                response_meta["web_search_notice"] = aligned_notice
+                response_meta["web_search_used"] = bool(aligned_citations)
 
-    answer, source = ask_qwen_science_assistant(request.question, latest)
-    return AIScienceAskResponse(answer=answer, source=source)
+            latency_ms = int((time.perf_counter() - start_ts) * 1000)
+            record_ai_audit(
+                operator_id=current_user.id,
+                operation_type="ai_stream",
+                source=source_used,
+                latency_ms=latency_ms,
+                prompt_text=request.question,
+                output_text=final_answer,
+                fallback_reason=infer_fallback_reason(source_used),
+                extra={
+                    "device_id": request.device_id,
+                    "stream": True,
+                    "sent_meta": sent_meta,
+                    "chunk_count": len(output_parts),
+                    "stream_error": stream_error,
+                    "model": response_meta.get("model"),
+                    "deep_thinking": bool(response_meta.get("deep_thinking")),
+                    "web_search_enabled": bool(response_meta.get("web_search_enabled")),
+                    "web_search_used": bool(response_meta.get("web_search_used")),
+                    "citations_count": len(response_meta.get("citations") or []),
+                    "rag_enabled": settings.rag_enabled,
+                },
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.websocket("/ws/telemetry/{device_id}")
@@ -564,10 +1348,10 @@ async def get_display_data(device_id: int = 1, db: Session = Depends(get_db)):
             "light_state": device.light_state,
         },
         "telemetry": {
-            "temp": float(latest_reading.temp) if latest_reading and latest_reading.temp else None,
-            "humidity": float(latest_reading.humidity) if latest_reading and latest_reading.humidity else None,
-            "soil_moisture": float(latest_reading.soil_moisture) if latest_reading and latest_reading.soil_moisture else None,
-            "light": float(latest_reading.light) if latest_reading and latest_reading.light else None,
+            "temp": float(latest_reading.temp) if latest_reading and latest_reading.temp is not None else None,
+            "humidity": float(latest_reading.humidity) if latest_reading and latest_reading.humidity is not None else None,
+            "soil_moisture": float(latest_reading.soil_moisture) if latest_reading and latest_reading.soil_moisture is not None else None,
+            "light": float(latest_reading.light) if latest_reading and latest_reading.light is not None else None,
             "timestamp": latest_reading.timestamp.isoformat() if latest_reading else None,
         },
         "plants": [
