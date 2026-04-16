@@ -15,14 +15,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.db.session import SessionLocal, engine
 from app.db.models import User, Class, Device
 from app.db.base import Base
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from app.core.security import hash_password as _hash_password
 
 
 def hash_password(password: str) -> str:
     """哈希密码"""
-    return pwd_context.hash(password)
+    return _hash_password(password)
 
 
 def init_db():

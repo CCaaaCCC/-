@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, token_blacklist
 from app.core.config import settings
-from app.core.security import create_access_token, oauth2_scheme, pwd_context
+from app.core.security import create_access_token, oauth2_scheme, verify_password
 from app.db.models import User
 from app.schemas.auth import Token
 
@@ -23,7 +23,7 @@ async def logout(token: str = Depends(oauth2_scheme)):
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
-    if not user or not pwd_context.verify(form_data.password, user.hashed_password):
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",

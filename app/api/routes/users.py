@@ -10,7 +10,7 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_admin_user, get_current_user, get_db
-from app.core.security import pwd_context
+from app.core.security import hash_password
 from app.core.validators import (
     get_password_rule_text,
     is_strict_password_role,
@@ -158,7 +158,7 @@ async def create_user(
         if db.query(User).filter(User.teacher_id == user.teacher_id).first():
             raise HTTPException(status_code=400, detail="工号已存在")
 
-    hashed_password = pwd_context.hash(user.password)
+    hashed_password = hash_password(user.password)
     db_user = User(
         username=user.username,
         hashed_password=hashed_password,
@@ -363,7 +363,7 @@ async def reset_password(
     if not validate_password(new_password, strict=strict_mode):
         raise HTTPException(status_code=400, detail=f"密码强度不足：{password_rule}")
 
-    db_user.hashed_password = pwd_context.hash(new_password)
+    db_user.hashed_password = hash_password(new_password)
     log_operation(db, current_user.id, "reset_password", user_id, f"重置用户密码：{db_user.username}")
     db.commit()
 
@@ -454,7 +454,7 @@ async def batch_create_users(
                 error_users.append({"username": user_data.username, "error": "工号已存在"})
                 continue
 
-            hashed_password = pwd_context.hash(user_data.password)
+            hashed_password = hash_password(user_data.password)
             db_user = User(
                 username=user_data.username,
                 hashed_password=hashed_password,
@@ -586,7 +586,7 @@ async def batch_reset_password(
             if user.username == "admin":
                 failed_users.append({"user_id": user_id, "username": user.username, "error": "不能重置管理员密码"})
                 continue
-            user.hashed_password = pwd_context.hash(request.new_password)
+            user.hashed_password = hash_password(request.new_password)
             reset_count += 1
             log_operation(db, current_user.id, "batch_reset_password", user_id, f"批量重置密码：{user.username}")
         else:
@@ -681,7 +681,7 @@ async def import_users(
                         continue
                     class_id = cls.id
 
-                hashed_password = pwd_context.hash(password)
+                hashed_password = hash_password(password)
                 db_user = User(
                     username=username,
                     hashed_password=hashed_password,

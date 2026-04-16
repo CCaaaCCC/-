@@ -1,7 +1,7 @@
 import os
 
 from app.core.config import settings
-from app.core.security import pwd_context
+from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.db.models import Class, ContentCategory, Device, User
 
@@ -29,7 +29,7 @@ def init_demo_data() -> None:
         
         for username, password, role in users:
             if not db.query(User).filter(User.username == username).first():
-                hashed_pw = pwd_context.hash(password)
+                hashed_pw = hash_password(password)
                 db.add(User(username=username, hashed_password=hashed_pw, role=role))
                 
         if not db.query(Device).first():
