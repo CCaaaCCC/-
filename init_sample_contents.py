@@ -8,18 +8,12 @@
 """
 
 from app.db.session import engine, SessionLocal
-from app.db.models import ContentCategory, TeachingContent, User
+from app.db.models import TeachingContent, User
 
 def init_sample_contents():
     db = SessionLocal()
     
     try:
-        # 获取第一个分类
-        category = db.query(ContentCategory).filter(ContentCategory.name == "农作物习性").first()
-        if not category:
-            print("❌ 未找到分类，请先运行主程序初始化数据库")
-            return
-        
         # 获取管理员用户
         admin_user = db.query(User).filter(User.username == "admin").first()
         admin_id = admin_user.id if admin_user else 1
@@ -35,7 +29,7 @@ def init_sample_contents():
         sample_contents = [
             TeachingContent(
                 title="番茄的生长周期",
-                category_id=category.id,
+                tags="农作物,番茄,生长周期",
                 content_type="article",
                 content="""# 番茄的生长周期
 
@@ -86,7 +80,7 @@ def init_sample_contents():
             ),
             TeachingContent(
                 title="黄瓜种植指南",
-                category_id=category.id,
+                tags="农作物,黄瓜,种植",
                 content_type="article",
                 content="""# 黄瓜种植指南
 
@@ -123,7 +117,7 @@ def init_sample_contents():
             ),
             TeachingContent(
                 title="光合作用的原理",
-                category_id=db.query(ContentCategory).filter(ContentCategory.name == "自然科学").first().id,
+                tags="自然科学,光合作用,基础理论",
                 content_type="article",
                 content="""# 光合作用的原理
 
@@ -167,7 +161,7 @@ def init_sample_contents():
             ),
             TeachingContent(
                 title="植物细胞结构",
-                category_id=db.query(ContentCategory).filter(ContentCategory.name == "植物百科").first().id,
+                tags="植物百科,细胞结构,生物学",
                 content_type="article",
                 content="""# 植物细胞结构
 
@@ -203,7 +197,7 @@ def init_sample_contents():
             ),
             TeachingContent(
                 title="大棚温度对比实验",
-                category_id=db.query(ContentCategory).filter(ContentCategory.name == "实验指导").first().id,
+                tags="实验指导,温度实验,课堂实践",
                 content_type="article",
                 content="""# 大棚温度对比实验
 

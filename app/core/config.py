@@ -31,11 +31,10 @@ class Settings:
     device_token: str = os.getenv("DEVICE_TOKEN", "default_secret_device_token")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
-    # Keep qwen_* field names for backward compatibility in service code,
-    # while allowing DeepSeek-first environment variables.
-    qwen_api_key: str = os.getenv("DEEPSEEK_API_KEY", os.getenv("QWEN_API_KEY", "")).strip()
-    qwen_model: str = os.getenv("DEEPSEEK_MODEL", os.getenv("QWEN_MODEL", "deepseek-chat"))
-    qwen_base_url: str = os.getenv("DEEPSEEK_BASE_URL", os.getenv("QWEN_BASE_URL", "https://api.deepseek.com/v1"))
+    # DeepSeek API configuration.
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
     ai_langchain_enabled: bool = _as_bool(os.getenv("AI_LANGCHAIN_ENABLED"), default=True)
     ai_stream_enabled: bool = _as_bool(os.getenv("AI_STREAM_ENABLED"), default=True)

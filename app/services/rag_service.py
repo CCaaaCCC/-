@@ -90,7 +90,7 @@ def _build_chunks_for_content(content: TeachingContent) -> tuple[list[str], list
     text = "\n".join(
         [
             f"标题：{content.title}",
-            f"分类：{content.category_id}",
+            f"标签：{content.tags or ''}",
             f"正文：{content.content or ''}",
         ]
     )
@@ -106,7 +106,7 @@ def _build_chunks_for_content(content: TeachingContent) -> tuple[list[str], list
             {
                 "content_id": int(content.id),
                 "title": content.title,
-                "category_id": int(content.category_id) if content.category_id is not None else -1,
+                "tags": content.tags or "",
                 "chunk_index": idx,
             }
         )

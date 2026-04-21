@@ -45,6 +45,7 @@ export interface Class {
     description?: string;
     teacher_id?: number;
     teacher_name?: string;
+    invite_code?: string | null;
     student_count: number;
     is_active: boolean;
     created_at: string;
@@ -207,6 +208,11 @@ export const createClass = async (cls: {
     teacher_id?: number;
 }): Promise<Class> => {
     const response = await api.post('/classes', cls);
+    return response.data;
+};
+
+export const refreshClassInviteCode = async (classId: number): Promise<Class> => {
+    const response = await api.post(`/classes/${classId}/refresh-invite-code`);
     return response.data;
 };
 

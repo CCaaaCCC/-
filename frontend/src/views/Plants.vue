@@ -45,51 +45,68 @@
 
       <!-- 右侧植物列表 -->
       <div class="content-area">
-        <div class="plant-grid" v-loading="loading">
-          <StatusPanel
-            v-if="pageErrorDetail"
-            :description="pageErrorDetail"
-            :actionText="pageErrorActionText"
-            :actionRoute="pageErrorActionRoute"
-          />
+        <div class="plant-grid">
+          <template v-if="loading">
+            <div v-for="idx in 6" :key="`plant-skeleton-${idx}`" class="plant-card-skeleton app-glass-card">
+              <el-skeleton animated>
+                <template #template>
+                  <el-skeleton-item variant="image" class="skeleton-thumb" />
+                  <div class="skeleton-lines">
+                    <el-skeleton-item variant="h3" style="width: 62%" />
+                    <el-skeleton-item variant="text" style="width: 52%" />
+                    <el-skeleton-item variant="text" style="width: 86%" />
+                  </div>
+                </template>
+              </el-skeleton>
+            </div>
+          </template>
 
-          <el-card
-            v-for="plant in plants"
-            :key="plant.id"
-            class="plant-card"
-            shadow="hover"
-            @click="viewPlant(plant)"
-          >
-            <div class="plant-image">
-              <img v-if="plant.cover_image" :src="resolveImageUrl(plant.cover_image)" class="cover-img" alt="植物封面" />
-              <div v-else class="image-placeholder">
-                <el-icon :size="60"><Picture /></el-icon>
+          <template v-else>
+            <StatusPanel
+              v-if="pageErrorDetail"
+              :description="pageErrorDetail"
+              :actionText="pageErrorActionText"
+              :actionRoute="pageErrorActionRoute"
+            />
+
+            <el-card
+              v-for="plant in plants"
+              :key="plant.id"
+              class="plant-card"
+              shadow="hover"
+              @click="viewPlant(plant)"
+            >
+              <div class="plant-image">
+                <img v-if="plant.cover_image" v-lazy="resolveImageUrl(plant.cover_image)" class="cover-img" alt="植物封面" />
+                <div v-else class="image-placeholder">
+                  <el-icon :size="60"><Picture /></el-icon>
+                </div>
               </div>
-            </div>
-            <h3 class="plant-name">{{ plant.plant_name }}</h3>
-            <p class="plant-species">{{ plant.species || '未指定品种' }}</p>
-            <div class="plant-meta">
-              <span>📊 {{ plant.growth_record_count }} 条记录</span>
-              <span v-if="isTeacher && !plant.can_manage" class="readonly-tip">只读</span>
-              <span :class="['status-tag', plant.status]">
-                {{ getStatusText(plant.status) }}
-              </span>
-            </div>
-          </el-card>
+              <h3 class="plant-name">{{ plant.plant_name }}</h3>
+              <p class="plant-species">{{ plant.species || '未指定品种' }}</p>
+              <div class="plant-meta">
+                <span>📊 {{ plant.growth_record_count }} 条记录</span>
+                <span v-if="isTeacher && !plant.can_manage" class="readonly-tip">只读</span>
+                <span :class="['status-tag', plant.status]">
+                  {{ getStatusText(plant.status) }}
+                </span>
+              </div>
+            </el-card>
 
-          <StatusPanel
-            v-if="!pageErrorDetail && !loading && plants.length === 0"
-            :description="isTeacher ? '暂无班级植物档案' : '暂无可查看的植物档案'"
-            :actionText="isTeacher ? '创建档案' : '去个人中心'"
-            :actionRoute="isTeacher ? undefined : '/profile'"
-            :actionCallback="isTeacher ? () => (showPlantDialog = true) : undefined"
-          />
+            <StatusPanel
+              v-if="!pageErrorDetail && plants.length === 0"
+              :description="isTeacher ? '暂无班级植物档案' : '暂无可查看的植物档案'"
+              :actionText="isTeacher ? '创建档案' : '去个人中心'"
+              :actionRoute="isTeacher ? undefined : '/profile'"
+              :actionCallback="isTeacher ? () => (showPlantDialog = true) : undefined"
+            />
+          </template>
         </div>
       </div>
     </div>
 
     <!-- 创建档案对话框 -->
-    <el-dialog v-model="showPlantDialog" title="创建植物档案" width="550px" :close-on-click-modal="false">
+    <el-dialog v-model="showPlantDialog" title="创建植物档案" width="550px" :close-on-click-modal="false" @closed="resetPlantForm">
       <el-form :model="plantForm" label-width="100px" ref="plantFormRef">
         <el-form-item label="植物名称" required>
           <el-input v-model="plantForm.plant_name" placeholder="如：番茄 01 号" />
@@ -145,6 +162,7 @@
         <el-form-item label="封面图片">
           <el-upload
             :show-file-list="false"
+            :before-upload="beforeCoverUpload"
             :http-request="handleCoverUpload"
             accept="image/*"
           >
@@ -177,7 +195,7 @@
           <el-col :span="10">
             <div class="plant-info">
               <div class="info-avatar">
-                <img v-if="currentPlant.cover_image" :src="resolveImageUrl(currentPlant.cover_image)" class="detail-cover-img" alt="植物封面" />
+                <img v-if="currentPlant.cover_image" v-lazy="resolveImageUrl(currentPlant.cover_image)" class="detail-cover-img" alt="植物封面" />
                 <el-icon v-else :size="80"><Picture /></el-icon>
               </div>
               <h3>{{ currentPlant.plant_name }}</h3>
@@ -314,7 +332,6 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
-import { useRouter } from 'vue-router';
 import { Plus, Filter, Picture } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import type { FormInstance, UploadRequestOptions } from 'element-plus';
@@ -332,8 +349,8 @@ import { getDevices } from '../api/devices';
 import { useCurrentUser } from '../composables/useCurrentUser';
 import AppTopBar from '../components/AppTopBar.vue';
 import { getErrorMessage } from '../utils/error';
+import { createFileValidator } from '../composables/useFileValidation';
 
-const router = useRouter();
 const { role: userRole, isTeacher, ensureLoaded } = useCurrentUser();
 
 const roleTagType = computed(() => {
@@ -386,7 +403,7 @@ const currentPlant = ref<any>(null);
 const plantFormRef = ref<FormInstance>();
 
 // 表单
-const plantForm = ref({
+const buildInitialPlantForm = () => ({
   plant_name: '',
   species: '',
   class_id: undefined as number | undefined,
@@ -397,6 +414,13 @@ const plantForm = ref({
   cover_image: '',
   description: ''
 });
+
+const plantForm = ref(buildInitialPlantForm());
+
+const resetPlantForm = () => {
+  plantForm.value = buildInitialPlantForm();
+  uploadingCover.value = false;
+};
 
 const recordForm = ref({
   record_date: toLocalDateString(),
@@ -427,6 +451,7 @@ const loadDevices = async () => {
 
 const loadPlants = async (showError = true): Promise<boolean> => {
   loading.value = true;
+  plants.value = [];
   pageErrorDetail.value = '';
   pageErrorActionText.value = '';
   pageErrorActionRoute.value = '';
@@ -502,17 +527,7 @@ const submitPlant = async () => {
       ElMessage.warning('档案创建成功，但列表刷新失败，请稍后手动刷新');
     }
     showPlantDialog.value = false;
-    plantForm.value = {
-      plant_name: '',
-      species: '',
-      class_id: undefined,
-      device_id: undefined,
-      plant_date: undefined,
-      expected_harvest_date: undefined,
-      status: 'growing',
-      cover_image: '',
-      description: ''
-    };
+    resetPlantForm();
   } catch (error: any) {
     ElMessage.error(getErrorMessage(error, '创建失败'));
   } finally {
@@ -535,6 +550,18 @@ const handleCoverUpload = async (options: UploadRequestOptions) => {
     uploadingCover.value = false;
   }
 };
+
+const validatePlantCoverUpload = createFileValidator(
+  {
+    allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+    maxSizeMB: 10,
+    extensionMessage: '封面图仅支持 jpg/jpeg/png/webp/gif',
+    sizeMessage: '封面图大小不能超过 10MB',
+  },
+  (message) => ElMessage.error(message),
+);
+
+const beforeCoverUpload = (file: File) => validatePlantCoverUpload(file);
 
 const resolveImageUrl = (url?: string) => {
   if (!url) return '';
@@ -682,6 +709,23 @@ onMounted(async () => {
   cursor: pointer;
   transition: transform 0.2s;
   text-align: center;
+}
+
+.plant-card-skeleton {
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-light);
+  overflow: hidden;
+}
+
+.skeleton-thumb {
+  width: 100%;
+  height: 150px;
+}
+
+.skeleton-lines {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
 }
 
 .plant-card:hover {

@@ -69,6 +69,7 @@ class ClassUpdate(BaseModel):
 
 class ClassResponse(ClassBase):
     id: int
+    invite_code: str | None = None
     is_active: bool
     created_at: datetime.datetime
     teacher_name: str | None = None

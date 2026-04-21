@@ -111,6 +111,10 @@
       class="mb-4"
     />
 
+    <div v-if="fetchErrorDetail && selectedDeviceId" class="retry-row mb-4">
+      <el-button size="small" type="primary" plain @click="fetchData(true)">重试当前设备数据</el-button>
+    </div>
+
     <div v-if="selectedDeviceId" class="content">
       <!-- Status Cards -->
       <div class="cards-grid">
@@ -169,21 +173,6 @@
         </el-card>
       </div>
 
-      <el-card v-if="canControl" class="demo-scene-card mb-4" shadow="hover">
-        <template #header>
-          <div class="card-header">
-            <span>课堂演示一键场景</span>
-            <el-tag size="small" type="danger">答辩快捷</el-tag>
-          </div>
-        </template>
-        <div class="demo-btns">
-          <el-button :loading="scenarioLoading === 'drought'" @click="runScenario('drought')">干旱胁迫</el-button>
-          <el-button :loading="scenarioLoading === 'heatwave'" @click="runScenario('heatwave')">高温应激</el-button>
-          <el-button :loading="scenarioLoading === 'low_light'" @click="runScenario('low_light')">低光照</el-button>
-          <el-button type="success" :loading="scenarioLoading === 'healthy'" @click="runScenario('healthy')">恢复健康态</el-button>
-        </div>
-      </el-card>
-
       <!-- Control Card (Teacher/Admin Only) -->
       <el-card v-if="canControl" class="control-card mb-4" shadow="hover" header="远程控制">
         <div class="control-grid">
@@ -192,6 +181,8 @@
             <el-switch
               v-model="pumpActive"
               @change="onPumpChange"
+              :loading="controlLoading.pump"
+              :disabled="isControlLocked"
               active-color="#13ce66" />
           </div>
           <div class="control-item">
@@ -199,14 +190,40 @@
             <el-switch
               v-model="fanActive"
               @change="onFanChange"
+              :loading="controlLoading.fan"
+              :disabled="isControlLocked"
               active-color="#409EFF" />
+            <div class="control-level">
+              <span class="level-label">风速 {{ fanSpeed }}%</span>
+              <el-slider
+                v-model="fanSpeed"
+                :min="0"
+                :max="100"
+                :step="5"
+                :show-input="true"
+                :disabled="isControlLocked"
+                @change="onFanSpeedChange" />
+            </div>
           </div>
           <div class="control-item">
             <span>植物灯</span>
             <el-switch
               v-model="lightActive"
               @change="onLightChange"
+              :loading="controlLoading.light"
+              :disabled="isControlLocked"
               active-color="#E6A23C" />
+            <div class="control-level">
+              <span class="level-label">亮度 {{ lightBrightness }}%</span>
+              <el-slider
+                v-model="lightBrightness"
+                :min="0"
+                :max="100"
+                :step="5"
+                :show-input="true"
+                :disabled="isControlLocked"
+                @change="onLightBrightnessChange" />
+            </div>
           </div>
         </div>
       </el-card>
@@ -256,9 +273,7 @@ import {
   exportTelemetry,
   askScienceAssistant,
   streamScienceAssistant,
-  triggerDemoScenario,
   createTelemetrySocket,
-  type DemoScenario,
   type Device,
   type Telemetry,
   type TelemetryRealtimePayload
@@ -267,10 +282,11 @@ import TelemetryChart from './TelemetryChart.vue';
 import { Thermometer, Droplets, Sprout, Sun } from 'lucide-vue-next';
 import { ArrowDown } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import { getErrorMessage } from '../utils/error';
+import { getActionErrorMessage, getErrorMessage } from '../utils/error';
 import { clearAuthSession } from '../utils/authSession';
 
 type MetricKey = 'temp' | 'humidity' | 'soil_moisture' | 'light';
+type ActuatorKey = 'pump' | 'fan' | 'light';
 
 type AIRole = 'user' | 'assistant';
 
@@ -327,6 +343,13 @@ const pulseTimers: Partial<Record<MetricKey, ReturnType<typeof setTimeout>>> = {
 const pumpActive = ref(false);
 const fanActive = ref(false);
 const lightActive = ref(false);
+const fanSpeed = ref(100);
+const lightBrightness = ref(100);
+const controlLoading = ref<Record<ActuatorKey, boolean>>({
+  pump: false,
+  fan: false,
+  light: false,
+});
 
 const aiQuestion = ref('');
 const aiMessages = ref<AIChatMessage[]>([]);
@@ -334,7 +357,6 @@ const aiLoading = ref(false);
 const lastAskedQuestion = ref('');
 const promptSetIndex = ref(0);
 const aiChatWindowRef = ref<HTMLElement | null>(null);
-const scenarioLoading = ref<DemoScenario | ''>('');
 const quickQuestions = [
   { label: '诊断：是否要浇水', question: '现在要不要浇水？为什么？' },
   { label: '实验：蒸腾作用', question: '温度变化会怎样影响植物蒸腾？' },
@@ -467,6 +489,10 @@ const userRoleText = computed(() => {
 
 const canControl = computed(() => {
   return ['teacher', 'admin'].includes(userRole.value);
+});
+
+const isControlLocked = computed(() => {
+  return controlLoading.value.pump || controlLoading.value.fan || controlLoading.value.light;
 });
 
 const shortcutActions = computed<ShortcutAction[]>(() => {
@@ -681,22 +707,6 @@ const askRecommended = async (question: string) => {
   await askAI(question, true);
 };
 
-const buildLocalScienceFallback = (question: string): string => {
-  const row = latestReading.value;
-  if (!row) {
-    return `你问的是：${question}。当前暂无实时数据，建议先采集一组温度、湿度、土壤湿度和光照数据，再进行诊断。`;
-  }
-
-  const hints: string[] = [];
-  if (row.soil_moisture < 20) hints.push('土壤湿度偏低，优先补水并复测 10 分钟后变化');
-  if (row.temp > 33) hints.push('温度偏高，建议先通风降温，观察叶片卷曲是否缓解');
-  if (row.light < 2500) hints.push('光照偏弱，可提升补光并记录 15 分钟后叶片状态');
-  if (row.humidity < 35) hints.push('空气湿度偏低，可适度喷雾并观察蒸腾变化');
-  if (hints.length === 0) hints.push('当前环境总体平稳，可继续按 5 分钟间隔记录趋势');
-
-  return `你问的是：${question}。基于当前数据（温度${row.temp.toFixed(1)}°C、湿度${row.humidity.toFixed(1)}%、土壤湿度${row.soil_moisture.toFixed(1)}%、光照${row.light.toFixed(0)}Lx），建议：${hints.join('；')}。`;
-};
-
 const fetchData = async (force = false) => {
   if (!selectedDeviceId.value) return;
   if (!force && wsConnected.value && history.value.length > 0) {
@@ -711,7 +721,11 @@ const fetchData = async (force = false) => {
   try {
     history.value = await getHistory(selectedDeviceId.value);
   } catch (error: any) {
-    fetchErrorDetail.value = getErrorMessage(error, '实时数据加载失败，请稍后重试');
+    fetchErrorDetail.value = getActionErrorMessage(error, {
+      action: '加载实时数据',
+      fallback: '实时数据加载失败，请稍后重试',
+      networkErrorMessage: '实时数据连接失败，请检查后端服务状态',
+    });
   } finally {
     if (showLoading) {
       dataLoading.value = false;
@@ -739,7 +753,9 @@ const applyRealtimePayload = (payload: TelemetryRealtimePayload) => {
   if (hasValueChanged(previous, realtime, 'light')) triggerValuePulse('light');
   pumpActive.value = payload.actuators.pump_state === 1;
   fanActive.value = payload.actuators.fan_state === 1;
+  fanSpeed.value = Number(payload.actuators.fan_speed ?? 100);
   lightActive.value = payload.actuators.light_state === 1;
+  lightBrightness.value = Number(payload.actuators.light_brightness ?? 100);
 };
 
 const clearWs = (resetAttempts = true) => {
@@ -897,13 +913,19 @@ const askAI = async (questionOverride?: string, appendUserMessage = true) => {
         message.status = 'done';
       });
     } catch (fallbackError: any) {
-      const localFallback = buildLocalScienceFallback(question);
-      updateAIMessage(assistantMessageId, (message) => {
-        message.content = localFallback;
-        message.source = 'local-rule';
-        message.status = 'done';
+      const errMsg = getActionErrorMessage(fallbackError, {
+        action: 'AI 问答',
+        fallback: 'AI 助手暂时不可用，请稍后重试',
       });
-      ElMessage.warning(getErrorMessage(fallbackError, error?.message || '云端 AI 暂时不可用，已切换本地应急建议'));
+      updateAIMessage(assistantMessageId, (message) => {
+        message.content = errMsg;
+        message.source = 'error';
+        message.status = 'error';
+      });
+      ElMessage.error(getActionErrorMessage(error, {
+        action: 'AI 问答',
+        fallback: errMsg,
+      }));
     }
   } finally {
     if (aiAbortController === currentController) {
@@ -933,65 +955,91 @@ const stopAI = () => {
   }
 };
 
-const runScenario = async (scenario: DemoScenario) => {
-  if (!selectedDeviceId.value) {
-    ElMessage.warning('请先选择设备');
-    return;
+const syncControlStateFromDevice = (device: Device) => {
+  pumpActive.value = device.pump_state === 1;
+  fanActive.value = device.fan_state === 1;
+  fanSpeed.value = Number(device.fan_speed ?? 100);
+  lightActive.value = device.light_state === 1;
+  lightBrightness.value = Number(device.light_brightness ?? 100);
+};
+
+const patchSelectedDeviceState = (
+  deviceId: number,
+  nextState: {
+    pump_state: number;
+    fan_state: number;
+    fan_speed: number;
+    light_state: number;
+    light_brightness: number;
   }
-  scenarioLoading.value = scenario;
-  try {
-    const res = await triggerDemoScenario(selectedDeviceId.value, scenario);
-    ElMessage.success(res.message || '场景切换成功');
-    await fetchData(true);
-  } catch (error: any) {
-    ElMessage.error(getErrorMessage(error, '场景切换失败'));
-  } finally {
-    scenarioLoading.value = '';
-  }
+) => {
+  const target = devices.value.find((item) => item.id === deviceId);
+  if (!target) return;
+  target.pump_state = nextState.pump_state;
+  target.fan_state = nextState.fan_state;
+  target.fan_speed = nextState.fan_speed;
+  target.light_state = nextState.light_state;
+  target.light_brightness = nextState.light_brightness;
 };
 
 const fetchDevices = async () => {
   try {
+    const currentDeviceId = selectedDeviceId.value;
     devices.value = await getDevices();
     if (devices.value.length > 0) {
-      selectedDeviceId.value = devices.value[0].id;
-      // Initialize control states from device data if available
-      const dev = devices.value[0];
-      pumpActive.value = dev.pump_state === 1;
-      fanActive.value = dev.fan_state === 1;
-      lightActive.value = dev.light_state === 1;
-      fetchData(true);
-      connectRealtime();
+      const nextDevice = devices.value.find((item) => item.id === currentDeviceId) || devices.value[0];
+      const deviceChanged = selectedDeviceId.value !== nextDevice.id;
+      selectedDeviceId.value = nextDevice.id;
+      syncControlStateFromDevice(nextDevice);
+
+      if (deviceChanged || history.value.length === 0) {
+        await fetchData(true);
+        connectRealtime();
+      }
     } else {
       selectedDeviceId.value = null;
       clearWs();
     }
-  } catch (error) {
-    fetchErrorDetail.value = getErrorMessage(error, '设备加载失败，请稍后重试');
+  } catch (error: any) {
+    fetchErrorDetail.value = getActionErrorMessage(error, {
+      action: '加载设备列表',
+      fallback: '设备加载失败，请稍后重试',
+      networkErrorMessage: '设备列表加载失败：无法连接后端服务',
+    });
     console.error("Failed to fetch devices", error);
   }
 };
 
 const handleDeviceChange = () => {
   history.value = [];
+  fetchErrorDetail.value = '';
   fetchData(true);
   // Update control states for new device
   const dev = devices.value.find(d => d.id === selectedDeviceId.value);
   if (dev) {
-    pumpActive.value = dev.pump_state === 1;
-    fanActive.value = dev.fan_state === 1;
-    lightActive.value = dev.light_state === 1;
+    syncControlStateFromDevice(dev);
   }
   connectRealtime();
 };
 
-const handleControlChange = async (type: string, newValue: boolean) => {
+const getActuatorLabel = (type: ActuatorKey) => {
+  if (type === 'pump') return '水泵';
+  if (type === 'fan') return '排风扇';
+  return '植物灯';
+};
+
+const handleControlChange = async (type: ActuatorKey, newValue: boolean) => {
   if (!selectedDeviceId.value) return;
+  if (isControlLocked.value && !controlLoading.value[type]) return;
+
+  controlLoading.value[type] = true;
 
   // 保存旧状态
   const pumpOld = pumpActive.value;
   const fanOld = fanActive.value;
   const lightOld = lightActive.value;
+  const fanSpeedOld = fanSpeed.value;
+  const lightBrightnessOld = lightBrightness.value;
 
   // 更新当前状态
   if (type === 'pump') pumpActive.value = newValue;
@@ -999,20 +1047,30 @@ const handleControlChange = async (type: string, newValue: boolean) => {
   else if (type === 'light') lightActive.value = newValue;
 
   try {
-    await controlDevice(selectedDeviceId.value, {
+    const nextState = {
       pump_state: pumpActive.value ? 1 : 0,
       fan_state: fanActive.value ? 1 : 0,
-      light_state: lightActive.value ? 1 : 0
-    });
-    // 成功后刷新 devices
-    await fetchDevices();
-    ElMessage.success('控制成功');
+      fan_speed: Number(fanSpeed.value),
+      light_state: lightActive.value ? 1 : 0,
+      light_brightness: Number(lightBrightness.value),
+    };
+
+    await controlDevice(selectedDeviceId.value, nextState);
+    patchSelectedDeviceState(selectedDeviceId.value, nextState);
+    ElMessage.success(`${getActuatorLabel(type)}已${newValue ? '开启' : '关闭'}`);
   } catch (error: any) {
     // 恢复旧状态
     pumpActive.value = pumpOld;
     fanActive.value = fanOld;
     lightActive.value = lightOld;
-    ElMessage.error('控制失败，已恢复');
+    fanSpeed.value = fanSpeedOld;
+    lightBrightness.value = lightBrightnessOld;
+    ElMessage.error(getActionErrorMessage(error, {
+      action: `${getActuatorLabel(type)}控制`,
+      fallback: '控制失败，已恢复到修改前状态',
+    }));
+  } finally {
+    controlLoading.value[type] = false;
   }
 };
 
@@ -1026,6 +1084,70 @@ const onFanChange = (val: string | number | boolean) => {
 
 const onLightChange = (val: string | number | boolean) => {
   handleControlChange('light', Boolean(val));
+};
+
+const onFanSpeedChange = async (value: number | [number, number]) => {
+  if (!selectedDeviceId.value) return;
+  if (Array.isArray(value)) return;
+  if (isControlLocked.value && !controlLoading.value.fan) return;
+
+  const nextSpeed = Math.max(0, Math.min(100, Number(value)));
+  const oldSpeed = fanSpeed.value;
+  fanSpeed.value = nextSpeed;
+  controlLoading.value.fan = true;
+
+  try {
+    const nextState = {
+      pump_state: pumpActive.value ? 1 : 0,
+      fan_state: fanActive.value ? 1 : 0,
+      fan_speed: nextSpeed,
+      light_state: lightActive.value ? 1 : 0,
+      light_brightness: Number(lightBrightness.value),
+    };
+    await controlDevice(selectedDeviceId.value, nextState);
+    patchSelectedDeviceState(selectedDeviceId.value, nextState);
+    ElMessage.success(`风速已设置为 ${nextSpeed}%`);
+  } catch (error: any) {
+    fanSpeed.value = oldSpeed;
+    ElMessage.error(getActionErrorMessage(error, {
+      action: '风速调节',
+      fallback: '风速设置失败，已恢复到修改前状态',
+    }));
+  } finally {
+    controlLoading.value.fan = false;
+  }
+};
+
+const onLightBrightnessChange = async (value: number | [number, number]) => {
+  if (!selectedDeviceId.value) return;
+  if (Array.isArray(value)) return;
+  if (isControlLocked.value && !controlLoading.value.light) return;
+
+  const nextBrightness = Math.max(0, Math.min(100, Number(value)));
+  const oldBrightness = lightBrightness.value;
+  lightBrightness.value = nextBrightness;
+  controlLoading.value.light = true;
+
+  try {
+    const nextState = {
+      pump_state: pumpActive.value ? 1 : 0,
+      fan_state: fanActive.value ? 1 : 0,
+      fan_speed: Number(fanSpeed.value),
+      light_state: lightActive.value ? 1 : 0,
+      light_brightness: nextBrightness,
+    };
+    await controlDevice(selectedDeviceId.value, nextState);
+    patchSelectedDeviceState(selectedDeviceId.value, nextState);
+    ElMessage.success(`补光亮度已设置为 ${nextBrightness}%`);
+  } catch (error: any) {
+    lightBrightness.value = oldBrightness;
+    ElMessage.error(getActionErrorMessage(error, {
+      action: '补光亮度调节',
+      fallback: '亮度设置失败，已恢复到修改前状态',
+    }));
+  } finally {
+    controlLoading.value.light = false;
+  }
 };
 
 const handleLogout = () => {
@@ -1081,10 +1203,12 @@ const handleExport = async () => {
       ElMessage.error(detail || '所选日期范围内没有数据');
     } else if (error.response?.status === 400) {
       ElMessage.error(detail || '请求参数错误');
-    } else if (error.response?.status === 403) {
-      ElMessage.error(detail || '没有权限导出该设备数据');
     } else {
-      ElMessage.error(detail || '导出失败，请重试');
+      ElMessage.error(getActionErrorMessage(error, {
+        action: '导出数据',
+        fallback: detail || '导出失败，请重试',
+        forbiddenMessage: '没有权限导出该设备数据',
+      }));
     }
   } finally {
     exporting.value = false;
@@ -1173,6 +1297,11 @@ onUnmounted(() => {
 
 .mb-4 {
   margin-bottom: 16px;
+}
+
+.retry-row {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .role-panels {
@@ -1424,10 +1553,6 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
-.demo-scene-card {
-  border: 1px solid color-mix(in srgb, var(--el-color-danger) 26%, transparent);
-}
-
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1439,7 +1564,6 @@ onUnmounted(() => {
 .ai-panel,
 .student-missions,
 .teacher-panel,
-.demo-scene-card,
 .control-card {
   border-radius: 14px;
 }
@@ -1516,12 +1640,6 @@ onUnmounted(() => {
 .soil-icon { color: var(--el-color-success); }
 .light-icon { color: var(--el-color-warning); }
 
-.demo-btns {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 @keyframes valuePulse {
   0% { transform: scale(1); }
   50% { transform: scale(1.05); }
@@ -1546,6 +1664,18 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   font-weight: bold;
+}
+
+.control-level {
+  width: 210px;
+}
+
+.level-label {
+  display: inline-block;
+  margin-bottom: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {
@@ -1627,6 +1757,10 @@ onUnmounted(() => {
     border-radius: 8px;
   }
 
+  .control-level {
+    width: 58%;
+  }
+
   .role-panels {
     grid-template-columns: 1fr;
   }
@@ -1639,9 +1773,6 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .demo-btns .el-button {
-    width: 100%;
-  }
 }
 
 @media (max-width: 480px) {

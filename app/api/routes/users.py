@@ -1,6 +1,7 @@
 import datetime
 import csv
 import io
+import secrets
 import urllib.parse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -46,6 +47,8 @@ from app.schemas.users import (
 
 router = APIRouter(tags=["users"])
 
+INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
 
 def log_operation(
     db: Session,
@@ -61,6 +64,37 @@ def log_operation(
         details=details,
     )
     db.add(log)
+
+
+def generate_invite_code(db: Session, length: int = 8) -> str:
+    while True:
+        code = "".join(secrets.choice(INVITE_CODE_ALPHABET) for _ in range(length))
+        exists = db.query(Class).filter(Class.invite_code == code).first()
+        if not exists:
+            return code
+
+
+def build_class_response(db: Session, cls: Class, current_user: User) -> ClassResponse:
+    teacher_name = None
+    if cls.teacher_id:
+        teacher = db.query(User).filter(User.id == cls.teacher_id).first()
+        if teacher:
+            teacher_name = teacher.real_name or teacher.username
+
+    student_count = db.query(User).filter(User.class_id == cls.id).count()
+
+    return ClassResponse(
+        id=cls.id,
+        class_name=cls.class_name,
+        grade=cls.grade,
+        description=cls.description,
+        teacher_id=cls.teacher_id,
+        invite_code=cls.invite_code if current_user.role == "admin" else None,
+        is_active=cls.is_active,
+        created_at=cls.created_at,
+        teacher_name=teacher_name,
+        student_count=student_count,
+    )
 
 
 @router.get("/api/users")
@@ -780,31 +814,7 @@ async def get_classes(
 
     classes = query.order_by(Class.grade, Class.class_name).all()
 
-    result = []
-    for cls in classes:
-        teacher_name = None
-        if cls.teacher_id:
-            teacher = db.query(User).filter(User.id == cls.teacher_id).first()
-            if teacher:
-                teacher_name = teacher.real_name or teacher.username
-
-        student_count = db.query(User).filter(User.class_id == cls.id).count()
-
-        result.append(
-            ClassResponse(
-                id=cls.id,
-                class_name=cls.class_name,
-                grade=cls.grade,
-                description=cls.description,
-                teacher_id=cls.teacher_id,
-                is_active=cls.is_active,
-                created_at=cls.created_at,
-                teacher_name=teacher_name,
-                student_count=student_count,
-            )
-        )
-
-    return result
+    return [build_class_response(db, cls, current_user) for cls in classes]
 
 
 @router.post("/api/classes", response_model=ClassResponse)
@@ -813,22 +823,17 @@ async def create_class(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
-    db_class = Class(**cls.model_dump())
+    class_data = cls.model_dump()
+    if not class_data.get("teacher_id"):
+        class_data["teacher_id"] = current_user.id
+    class_data["invite_code"] = generate_invite_code(db)
+
+    db_class = Class(**class_data)
     db.add(db_class)
     db.commit()
     db.refresh(db_class)
 
-    return ClassResponse(
-        id=db_class.id,
-        class_name=db_class.class_name,
-        grade=db_class.grade,
-        description=db_class.description,
-        teacher_id=db_class.teacher_id,
-        is_active=db_class.is_active,
-        created_at=db_class.created_at,
-        teacher_name=None,
-        student_count=0,
-    )
+    return build_class_response(db, db_class, current_user)
 
 
 @router.put("/api/classes/{class_id}", response_model=ClassResponse)
@@ -849,25 +854,23 @@ async def update_class(
     db.commit()
     db.refresh(db_class)
 
-    teacher_name = None
-    if db_class.teacher_id:
-        teacher = db.query(User).filter(User.id == db_class.teacher_id).first()
-        if teacher:
-            teacher_name = teacher.real_name or teacher.username
+    return build_class_response(db, db_class, current_user)
 
-    student_count = db.query(User).filter(User.class_id == db_class.id).count()
 
-    return ClassResponse(
-        id=db_class.id,
-        class_name=db_class.class_name,
-        grade=db_class.grade,
-        description=db_class.description,
-        teacher_id=db_class.teacher_id,
-        is_active=db_class.is_active,
-        created_at=db_class.created_at,
-        teacher_name=teacher_name,
-        student_count=student_count,
-    )
+@router.post("/api/classes/{class_id}/refresh-invite-code", response_model=ClassResponse)
+async def refresh_class_invite_code(
+    class_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    db_class = db.query(Class).filter(Class.id == class_id).first()
+    if not db_class:
+        raise HTTPException(status_code=404, detail="班级不存在")
+
+    db_class.invite_code = generate_invite_code(db)
+    db.commit()
+    db.refresh(db_class)
+    return build_class_response(db, db_class, current_user)
 
 
 @router.delete("/api/classes/{class_id}")

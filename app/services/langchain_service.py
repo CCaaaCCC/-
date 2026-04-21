@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from xml.sax.saxutils import escape
 from typing import Any, AsyncGenerator
 
 from openai import AsyncOpenAI
@@ -20,68 +21,124 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-_ENV_KEYWORDS = (
+_GREENHOUSE_DOMAIN_KEYWORDS = (
     "greenhouse",
+    "crop",
+    "plant",
+    "irrigation",
+    "seedling",
+    "fertilizer",
     "sensor",
+    "soil_moisture",
+    "hydroponic",
+    "大棚",
+    "温室",
+    "作物",
+    "植物",
+    "番茄",
+    "辣椒",
+    "育苗",
+    "灌溉",
+    "施肥",
+    "传感器",
+)
+
+_ENV_METRIC_KEYWORDS = (
     "temperature",
     "humidity",
     "light",
     "soil",
     "env",
-    "data",
-    "\u5927\u68da",
-    "\u73af\u5883",
-    "\u6e29\u5ea6",
-    "\u6e7f\u5ea6",
-    "\u5149\u7167",
-    "\u571f\u58e4",
-    "\u4f20\u611f\u5668",
+    "温度",
+    "湿度",
+    "光照",
+    "土壤",
+    "环境",
+)
+
+_NON_GREENHOUSE_CONTEXT_HINTS = (
+    "人体",
+    "人类",
+    "室内",
+    "空调",
+    "穿衣",
+    "体温",
+    "发烧",
+    "cpu",
+    "电脑",
+    "手机",
+    "天气",
+    "城市",
+    "气象",
 )
 
 
 def is_langchain_enabled() -> bool:
-    return bool(settings.ai_langchain_enabled and settings.qwen_api_key)
+    return bool(settings.ai_langchain_enabled and settings.deepseek_api_key)
 
 
 def _science_role_label(user_role: str) -> str:
     role = (user_role or "student").lower()
     if role == "teacher":
-        return "teacher"
+        return "教师"
     if role == "admin":
-        return "admin"
-    return "student"
+        return "管理员"
+    return "学生"
+
+
+def has_greenhouse_intent(question: str) -> bool:
+    text = (question or "").strip().lower()
+    if not text:
+        return False
+
+    domain_hits = sum(1 for keyword in _GREENHOUSE_DOMAIN_KEYWORDS if keyword in text)
+    metric_hits = sum(1 for keyword in _ENV_METRIC_KEYWORDS if keyword in text)
+    has_non_greenhouse_hint = any(keyword in text for keyword in _NON_GREENHOUSE_CONTEXT_HINTS)
+
+    if domain_hits >= 1:
+        return True
+    if metric_hits >= 2 and not has_non_greenhouse_hint:
+        return True
+    if metric_hits >= 1 and "传感器" in text:
+        return True
+    return False
 
 
 def _has_greenhouse_intent(question: str) -> bool:
-    text = (question or "").lower()
-    return any(keyword.lower() in text for keyword in _ENV_KEYWORDS)
+    return has_greenhouse_intent(question)
+
+
+def _xml_block(tag: str, content: str) -> str:
+    safe = escape((content or "").strip())
+    return f"<{tag}>\n{safe}\n</{tag}>"
 
 
 def _science_system_prompt(user_role: str) -> str:
     role_label = _science_role_label(user_role)
     return (
-        f"You are an AI assistant in an education platform. Current user role: {role_label}.\n"
-        "Rules:\n"
-        "1. Use natural and direct language.\n"
-        "2. Do not force any fixed 3-part template unless user asks for it.\n"
-        "3. Only mention greenhouse or sensor data when the user question is clearly related.\n"
-        "4. If the question is unrelated to greenhouse context, answer directly and ignore sensor context.\n"
-        "5. Format output in readable Markdown when appropriate (headings, lists, tables, code blocks).\n"
-        "6. If web context is used, cite the source index like [1] right after the sentence. "
-        "Use only indices that exist in provided context and do not fabricate references.\n"
-        "7. Do not claim 'I cannot access the internet'. If real-time web data is missing, say it is temporarily unavailable and provide a practical fallback."
+        "你是教育平台的科学助手，已接入结构化上下文。\n"
+        f"当前用户角色：{role_label}。\n"
+        "可使用的上下文包括知识库片段、对话历史、联网检索结果，以及在相关场景下可用的大棚遥测数据。\n\n"
+        "回答规则：\n"
+        "1. 直接回答用户问题，语言自然，不要强行套用固定模板。\n"
+        "2. 将每个 XML 块视作可信输入，只使用与问题相关的部分，忽略无关信息。\n"
+        "3. 仅当问题明确与大棚/作物环境相关时，才引用遥测数据。\n"
+        "4. 使用 <search_results> 中事实时，请在对应句子后紧跟来源编号，如 [1]。\n"
+        "5. 严禁编造来源编号，只能使用 <search_results> 中实际存在的编号。\n"
+        "6. 若实时来源不足，请明确说明“当前来源暂不可用”，并给出可执行替代建议。\n"
+        "7. 在有助于阅读时优先使用简洁 Markdown 结构（标题、列表、表格、代码块）。"
     )
 
 
 async def generate_short_title(question: str, model_name: str | None = None) -> str | None:
     prompt = (question or "").strip()
-    if not prompt or not settings.qwen_api_key:
+    if not prompt or not settings.deepseek_api_key:
         return None
 
     try:
-        client = AsyncOpenAI(api_key=settings.qwen_api_key, base_url=settings.qwen_base_url)
+        client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
         response = await client.chat.completions.create(
-            model=model_name or settings.qwen_model,
+            model=model_name or settings.deepseek_model,
             messages=[
                 {
                     "role": "system",
@@ -116,16 +173,16 @@ def _build_science_messages(
     system_blocks = [_science_system_prompt(user_role)]
 
     if knowledge_context:
-        system_blocks.append(f"Knowledge context:\n{knowledge_context}")
+        system_blocks.append(_xml_block("knowledge_context", knowledge_context))
 
     if conversation_context:
-        system_blocks.append(f"Conversation context:\n{conversation_context}")
+        system_blocks.append(_xml_block("conversation_context", conversation_context))
 
     if web_context:
-        system_blocks.append(f"Web context:\n{web_context}")
+        system_blocks.append(_xml_block("search_results", web_context))
         system_blocks.append(
-            "Citation rule: when you use web context facts, append source indices like [1] [2] in answer text. "
-            "If no web fact is used, do not add any citation index."
+            "引用规则：使用 search_results 的事实时，在句内追加 [n]。"
+            "若未使用联网事实，不要添加来源编号。"
         )
 
     if latest and _has_greenhouse_intent(question):
@@ -139,7 +196,7 @@ def _build_science_messages(
         if latest.light is not None:
             sensor_bits.append(f"light {latest.light}lx")
         if sensor_bits:
-            system_blocks.append("Current greenhouse data: " + ", ".join(sensor_bits))
+            system_blocks.append(_xml_block("telemetry", ", ".join(sensor_bits)))
 
     return [
         {"role": "system", "content": "\n\n".join(system_blocks)},
@@ -147,13 +204,13 @@ def _build_science_messages(
     ]
 
 
-def _build_langchain_model(streaming: bool, model_name: str | None, max_tokens: int | None = None) -> ChatOpenAI | None:
+def _build_langchain_model(streaming: bool, model_name: str | None, max_tokens: int | None = None) -> Any | None:
     if ChatOpenAI is None:
         return None
     return ChatOpenAI(
-        model=model_name or settings.qwen_model,
-        openai_api_key=settings.qwen_api_key,
-        openai_api_base=settings.qwen_base_url,
+        model=model_name or settings.deepseek_model,
+        openai_api_key=settings.deepseek_api_key,
+        openai_api_base=settings.deepseek_base_url,
         temperature=settings.ai_temperature,
         max_tokens=max_tokens or settings.ai_max_tokens,
         timeout=settings.ai_stream_timeout_seconds if streaming else settings.ai_timeout_seconds,
@@ -206,9 +263,9 @@ async def ask_science_with_langchain(
             logger.warning("langchain ask failed, fallback to openai client: %s", exc)
 
     try:
-        client = AsyncOpenAI(api_key=settings.qwen_api_key, base_url=settings.qwen_base_url)
+        client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
         response = await client.chat.completions.create(
-            model=model_name or settings.qwen_model,
+            model=model_name or settings.deepseek_model,
             messages=messages,
             temperature=settings.ai_temperature,
             max_tokens=max_tokens or settings.ai_max_tokens,
@@ -234,7 +291,7 @@ async def stream_science_with_langchain(
     if not is_langchain_enabled() or not question.strip():
         return
 
-    client = AsyncOpenAI(api_key=settings.qwen_api_key, base_url=settings.qwen_base_url)
+    client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
     messages = _build_science_messages(
         question,
         latest,
@@ -246,7 +303,7 @@ async def stream_science_with_langchain(
 
     try:
         stream = await client.chat.completions.create(
-            model=model_name or settings.qwen_model,
+            model=model_name or settings.deepseek_model,
             messages=messages,
             temperature=settings.ai_temperature,
             max_tokens=max_tokens or settings.ai_max_tokens,
@@ -312,9 +369,9 @@ async def _invoke_json_task(
     if not is_langchain_enabled():
         return None
     try:
-        client = AsyncOpenAI(api_key=settings.qwen_api_key, base_url=settings.qwen_base_url)
+        client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
         response = await client.chat.completions.create(
-            model=model_name or settings.qwen_model,
+            model=model_name or settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -331,10 +388,10 @@ async def _invoke_json_task(
 
 async def generate_assignment_feedback_with_langchain(payload: dict[str, Any]) -> dict[str, Any] | None:
     system_prompt = (
-        "You are a teaching feedback assistant. Return JSON only with keys: "
-        "score_band(string), strengths(array), improvements(array), teacher_comment_draft(string)."
+        "你是教学反馈助手。请只返回 JSON，且仅包含以下字段："
+        "score_band(字符串)、strengths(数组)、improvements(数组)、teacher_comment_draft(字符串)。"
     )
-    user_prompt = f"Generate feedback from payload:\n{json.dumps(payload, ensure_ascii=False)}"
+    user_prompt = f"请基于以下载荷生成教学反馈：\n{json.dumps(payload, ensure_ascii=False)}"
     data = await _invoke_json_task(system_prompt=system_prompt, user_prompt=user_prompt)
     if not isinstance(data, dict):
         return None
@@ -343,7 +400,7 @@ async def generate_assignment_feedback_with_langchain(payload: dict[str, Any]) -
         "score_band": str(data.get("score_band") or "75-85"),
         "strengths": _to_str_list(data.get("strengths")),
         "improvements": _to_str_list(data.get("improvements")),
-        "teacher_comment_draft": str(data.get("teacher_comment_draft") or "Please add comments with classroom observations."),
+        "teacher_comment_draft": str(data.get("teacher_comment_draft") or "建议结合课堂观察补充针对性评语。"),
     }
 
 
@@ -355,8 +412,8 @@ async def polish_teaching_content_with_langchain(
     target_length: str | None = None,
 ) -> dict[str, Any] | None:
     system_prompt = (
-        "You are a content polishing assistant. Return JSON only with keys: "
-        "title_suggestion(string), organized_content(string)."
+        "你是教学内容润色助手。请只返回 JSON，且仅包含："
+        "title_suggestion(字符串)、organized_content(字符串)。"
     )
     user_payload = {
         "bullet_points": bullet_points,
@@ -364,7 +421,7 @@ async def polish_teaching_content_with_langchain(
         "tone": tone,
         "target_length": target_length,
     }
-    user_prompt = f"Polish the content from payload:\n{json.dumps(user_payload, ensure_ascii=False)}"
+    user_prompt = f"请根据以下载荷润色教学内容：\n{json.dumps(user_payload, ensure_ascii=False)}"
     data = await _invoke_json_task(system_prompt=system_prompt, user_prompt=user_prompt)
     if not isinstance(data, dict):
         return None
@@ -373,6 +430,6 @@ async def polish_teaching_content_with_langchain(
     if not organized:
         return None
     return {
-        "title_suggestion": str(data.get("title_suggestion") or "Science Lesson Draft"),
+        "title_suggestion": str(data.get("title_suggestion") or "科学课程教学稿"),
         "organized_content": organized,
     }

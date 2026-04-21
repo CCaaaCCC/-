@@ -364,8 +364,8 @@ const getSourceLabel = (source?: string | null): string => {
   if (!key) return '';
   if (key.includes('weather-api')) return '实时天气';
   if (key.includes('langchain')) return '智能检索';
-  if (key.includes('rule-based')) return '本地兜底';
-  if (key.includes('deepseek') || key.includes('qwen') || key.includes('llm')) return '在线模型';
+  if (key.includes('stream-error') || key === 'error') return '服务异常';
+  if (key.includes('deepseek') || key.includes('llm')) return '在线模型';
   return 'AI 来源';
 };
 

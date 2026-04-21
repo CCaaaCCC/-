@@ -41,7 +41,6 @@ from app.schemas.telemetry import (
     AIScienceAskRequest,
     AIScienceAskResponse,
     ControlRequest,
-    DemoScenarioRequest,
     DeviceCreateRequest,
     DeviceResponse,
     ExportRequest,
@@ -54,7 +53,6 @@ from app.services.ai_science_service import (
     generate_conversation_title,
     stream_science_assistant_with_source,
 )
-from app.services.ai_science_service import SOURCE_RULE_BASED, build_rule_based_science_answer
 from app.services.ai_audit_service import infer_fallback_reason, record_ai_audit
 from app.services.telemetry_hub_service import TelemetryHub
 
@@ -287,7 +285,9 @@ async def receive_telemetry(
                 "actuators": {
                     "pump_state": device.pump_state,
                     "fan_state": device.fan_state,
+                    "fan_speed": device.fan_speed if device.fan_speed is not None else 100,
                     "light_state": device.light_state,
+                    "light_brightness": device.light_brightness if device.light_brightness is not None else 100,
                 },
             },
         )
@@ -298,7 +298,9 @@ async def receive_telemetry(
             "commands": {
                 "pump": device.pump_state,
                 "fan": device.fan_state,
+                "fan_speed": device.fan_speed if device.fan_speed is not None else 100,
                 "light": device.light_state,
+                "light_brightness": device.light_brightness if device.light_brightness is not None else 100,
             },
         }
     except OperationalError:
@@ -350,7 +352,9 @@ async def create_device(
         status=device_data.status,
         pump_state=device_data.pump_state,
         fan_state=device_data.fan_state,
+        fan_speed=device_data.fan_speed if device_data.fan_speed is not None else 100,
         light_state=device_data.light_state,
+        light_brightness=device_data.light_brightness if device_data.light_brightness is not None else 100,
     )
     db.add(new_device)
     db.commit()
@@ -373,8 +377,12 @@ async def control_device(
         device.pump_state = data.pump_state
     if data.fan_state is not None:
         device.fan_state = data.fan_state
+    if data.fan_speed is not None:
+        device.fan_speed = data.fan_speed
     if data.light_state is not None:
         device.light_state = data.light_state
+    if data.light_brightness is not None:
+        device.light_brightness = data.light_brightness
 
     db.commit()
     db.refresh(device)
@@ -395,114 +403,14 @@ async def control_device(
             "actuators": {
                 "pump_state": device.pump_state,
                 "fan_state": device.fan_state,
+                "fan_speed": device.fan_speed if device.fan_speed is not None else 100,
                 "light_state": device.light_state,
+                "light_brightness": device.light_brightness if device.light_brightness is not None else 100,
             },
         },
     )
 
     return {"status": "success", "device_id": device_id}
-
-
-@router.post("/api/demo/scenario/{device_id}")
-async def trigger_demo_scenario(
-    device_id: int,
-    request: DemoScenarioRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_teacher_user),
-):
-    device = db.query(Device).filter(Device.id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="设备不存在")
-
-    scenario_map = {
-        "drought": {
-            "temp": 32.0,
-            "humidity": 38.0,
-            "soil_moisture": 12.0,
-            "light": 8200.0,
-            "pump_state": 0,
-            "fan_state": 1,
-            "light_state": 1,
-            "message": "已切换到干旱场景：土壤湿度偏低，适合讲解蒸腾作用。",
-        },
-        "heatwave": {
-            "temp": 39.0,
-            "humidity": 35.0,
-            "soil_moisture": 30.0,
-            "light": 9000.0,
-            "pump_state": 0,
-            "fan_state": 1,
-            "light_state": 0,
-            "message": "已切换到高温场景：建议观察高温对植物气孔调节的影响。",
-        },
-        "low_light": {
-            "temp": 23.0,
-            "humidity": 62.0,
-            "soil_moisture": 45.0,
-            "light": 900.0,
-            "pump_state": 0,
-            "fan_state": 0,
-            "light_state": 1,
-            "message": "已切换到低光场景：可引导学生讨论光合作用效率变化。",
-        },
-        "healthy": {
-            "temp": 25.5,
-            "humidity": 58.0,
-            "soil_moisture": 52.0,
-            "light": 5600.0,
-            "pump_state": 0,
-            "fan_state": 0,
-            "light_state": 1,
-            "message": "已切换到健康场景：环境稳定，适合安排长期观察记录。",
-        },
-    }
-
-    payload = scenario_map[request.scenario]
-
-    new_reading = SensorReading(
-        device_id=device_id,
-        temp=payload["temp"],
-        humidity=payload["humidity"],
-        soil_moisture=payload["soil_moisture"],
-        light=payload["light"],
-    )
-    db.add(new_reading)
-
-    device.pump_state = payload["pump_state"]
-    device.fan_state = payload["fan_state"]
-    device.light_state = payload["light_state"]
-    device.last_seen = datetime.datetime.utcnow()
-    device.status = 1
-
-    db.commit()
-    db.refresh(new_reading)
-    db.refresh(device)
-
-    await telemetry_hub.broadcast(
-        device_id,
-        {
-            "type": "telemetry_update",
-            "device_id": device_id,
-            "timestamp": new_reading.timestamp.isoformat() if new_reading.timestamp else None,
-            "telemetry": {
-                "temp": float(new_reading.temp),
-                "humidity": float(new_reading.humidity),
-                "soil_moisture": float(new_reading.soil_moisture),
-                "light": float(new_reading.light),
-            },
-            "actuators": {
-                "pump_state": device.pump_state,
-                "fan_state": device.fan_state,
-                "light_state": device.light_state,
-            },
-        },
-    )
-
-    return {
-        "status": "success",
-        "scenario": request.scenario,
-        "message": payload["message"],
-    }
 
 
 @router.get("/api/ai/conversations", response_model=list[AIConversationSummaryResponse])
@@ -655,19 +563,8 @@ async def ask_ai_science_assistant_in_conversation(
             enable_web_search=request.enable_web_search,
         )
     except Exception as exc:
-        logger.exception("ask_ai_science_assistant_in_conversation fallback to rule-based: %s", exc)
-        answer = build_rule_based_science_answer(question, latest, user_role=current_user.role)
-        source = SOURCE_RULE_BASED
-        response_meta = {
-            "model": selected_model,
-            "deep_thinking": request.enable_deep_thinking,
-            "web_search_enabled": request.enable_web_search,
-            "web_search_used": False,
-            "web_search_notice": (
-                "暂未获取到实时来源，已自动提供通用回答。" if request.enable_web_search else None
-            ),
-            "citations": [],
-        }
+        logger.exception("ask_ai_science_assistant_in_conversation failed: %s", exc)
+        raise HTTPException(status_code=503, detail="AI 助手暂时不可用，请稍后重试") from exc
 
     db.add(
         AIConversationMessage(
@@ -815,24 +712,14 @@ async def stream_ai_science_assistant_in_conversation(
                 yield f"event: error\ndata: {json.dumps({'message': '连接中断，已保留已生成内容'}, ensure_ascii=False)}\n\n"
                 yield "event: done\ndata: {}\n\n"
             else:
-                logger.exception("stream_ai_science_assistant_in_conversation fallback to rule-based: %s", exc)
-                source_used = SOURCE_RULE_BASED
-                stream_error = "stream_failed_fallback_rule_based"
-                fallback_answer = build_rule_based_science_answer(
-                    question,
-                    latest,
-                    user_role=current_user.role,
-                )
-                if request.enable_web_search:
-                    response_meta["web_search_notice"] = (
-                        "暂未获取到实时来源，已自动提供通用回答。"
-                    )
+                logger.exception("stream_ai_science_assistant_in_conversation failed: %s", exc)
+                source_used = "stream-error"
+                stream_error = "stream_failed_no_output"
                 if not sent_meta:
                     sent_meta = True
                     meta_payload = {"source": source_used, **response_meta}
                     yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
-                output_parts.append(fallback_answer)
-                yield f"event: token\ndata: {json.dumps({'text': fallback_answer}, ensure_ascii=False)}\n\n"
+                yield f"event: error\ndata: {json.dumps({'message': 'AI 助手暂时不可用，请稍后重试'}, ensure_ascii=False)}\n\n"
                 yield "event: done\ndata: {}\n\n"
         finally:
             final_answer = "".join(output_parts).strip()
@@ -933,19 +820,8 @@ async def ask_ai_science_assistant(
             enable_web_search=request.enable_web_search,
         )
     except Exception as exc:
-        logger.exception("ask_ai_science_assistant fallback to rule-based: %s", exc)
-        answer = build_rule_based_science_answer(request.question, latest, user_role=current_user.role)
-        source = SOURCE_RULE_BASED
-        response_meta = {
-            "model": selected_model,
-            "deep_thinking": request.enable_deep_thinking,
-            "web_search_enabled": request.enable_web_search,
-            "web_search_used": False,
-            "web_search_notice": (
-                "暂未获取到实时来源，已自动提供通用回答。" if request.enable_web_search else None
-            ),
-            "citations": [],
-        }
+        logger.exception("ask_ai_science_assistant failed: %s", exc)
+        raise HTTPException(status_code=503, detail="AI 助手暂时不可用，请稍后重试") from exc
 
     latency_ms = int((time.perf_counter() - start_ts) * 1000)
     record_ai_audit(
@@ -1047,24 +923,14 @@ async def stream_ai_science_assistant(
                 yield "event: done\ndata: {}\n\n"
                 return
 
-            logger.exception("stream_ai_science_assistant fallback to rule-based: %s", exc)
-            source_used = SOURCE_RULE_BASED
-            stream_error = "stream_failed_fallback_rule_based"
-            fallback_answer = build_rule_based_science_answer(
-                request.question,
-                latest,
-                user_role=current_user.role,
-            )
-            if request.enable_web_search:
-                response_meta["web_search_notice"] = (
-                    "暂未获取到实时来源，已自动提供通用回答。"
-                )
+            logger.exception("stream_ai_science_assistant failed: %s", exc)
+            source_used = "stream-error"
+            stream_error = "stream_failed_no_output"
             if not sent_meta:
                 sent_meta = True
                 meta_payload = {"source": source_used, **response_meta}
                 yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
-            output_parts.append(fallback_answer)
-            yield f"event: token\ndata: {json.dumps({'text': fallback_answer}, ensure_ascii=False)}\n\n"
+            yield f"event: error\ndata: {json.dumps({'message': 'AI 助手暂时不可用，请稍后重试'}, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
         finally:
             final_answer = "".join(output_parts).strip()
@@ -1141,7 +1007,9 @@ async def telemetry_ws(websocket: WebSocket, device_id: int):
                 "actuators": {
                     "pump_state": device.pump_state if device else 0,
                     "fan_state": device.fan_state if device else 0,
+                    "fan_speed": (device.fan_speed if device and device.fan_speed is not None else 100),
                     "light_state": device.light_state if device else 0,
+                    "light_brightness": (device.light_brightness if device and device.light_brightness is not None else 100),
                 },
                 "timestamp": latest.timestamp.isoformat() if latest and latest.timestamp else None,
             }

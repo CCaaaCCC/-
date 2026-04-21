@@ -1,9 +1,21 @@
 import os
+import secrets
 
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal
-from app.db.models import Class, ContentCategory, Device, User
+from app.db.models import Class, Device, User
+
+
+INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _generate_invite_code(db) -> str:
+    while True:
+        code = "".join(secrets.choice(INVITE_CODE_ALPHABET) for _ in range(8))
+        exists = db.query(Class).filter(Class.invite_code == code).first()
+        if not exists:
+            return code
 
 def init_demo_data() -> None:
     """Initialize presentation/demo data silently if configured."""
@@ -43,38 +55,32 @@ def init_demo_data() -> None:
                 )
             )
 
-        if not db.query(ContentCategory).first():
-            categories = [
-                ContentCategory(name="农作物习性", description="各种农作物的生长习性和环境需求", sort_order=1),
-                ContentCategory(name="植物百科", description="植物分类和特征介绍", sort_order=2),
-                ContentCategory(name="自然科学", description="自然科学基础知识", sort_order=3),
-                ContentCategory(name="实验指导", description="实验步骤和操作指南", sort_order=4),
-            ]
-            for cat in categories:
-                db.add(cat)
-            db.commit()
-
-            for cat in categories:
-                db.refresh(cat)
-
-            sub_categories = [
-                ContentCategory(name="温度需求", parent_id=categories[0].id, description="不同作物的温度适应性", sort_order=1),
-                ContentCategory(name="光照需求", parent_id=categories[0].id, description="光照对作物生长的影响", sort_order=2),
-                ContentCategory(name="水分需求", parent_id=categories[0].id, description="作物灌溉和水分管理", sort_order=3),
-                ContentCategory(name="土壤要求", parent_id=categories[0].id, description="土壤类型和肥料需求", sort_order=4),
-            ]
-            for sub_cat in sub_categories:
-                db.add(sub_cat)
-            db.commit()
-
         if not db.query(Class).first():
             teacher_user = db.query(User).filter(User.role == "teacher").first()
             teacher_id = teacher_user.id if teacher_user else None
 
             classes = [
-                Class(class_name="三年级 1 班", grade="三年级", description="2024 级 1 班", teacher_id=teacher_id),
-                Class(class_name="三年级 2 班", grade="三年级", description="2024 级 2 班", teacher_id=teacher_id),
-                Class(class_name="四年级 1 班", grade="四年级", description="2023 级 1 班", teacher_id=teacher_id),
+                Class(
+                    class_name="三年级 1 班",
+                    grade="三年级",
+                    description="2024 级 1 班",
+                    teacher_id=teacher_id,
+                    invite_code=_generate_invite_code(db),
+                ),
+                Class(
+                    class_name="三年级 2 班",
+                    grade="三年级",
+                    description="2024 级 2 班",
+                    teacher_id=teacher_id,
+                    invite_code=_generate_invite_code(db),
+                ),
+                Class(
+                    class_name="四年级 1 班",
+                    grade="四年级",
+                    description="2023 级 1 班",
+                    teacher_id=teacher_id,
+                    invite_code=_generate_invite_code(db),
+                ),
             ]
             for cls in classes:
                 db.add(cls)

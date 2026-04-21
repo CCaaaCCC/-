@@ -88,31 +88,34 @@
     </el-dialog>
 
     <div class="main-content">
-      <!-- 左侧分类导航 -->
+      <!-- 左侧标签导航 -->
       <div class="sidebar">
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>分类导航</span>
-              <el-button v-if="canManage" type="primary" size="small" @click="showCategoryDialog = true">
-                + 新建分类
-              </el-button>
+              <span>标签导航</span>
+              <el-tag size="small" type="info">多选标签</el-tag>
             </div>
           </template>
-          <el-menu :default-active="activeCategoryId.toString()" @select="handleCategorySelect">
-            <el-menu-item index="0">
-              <el-icon><Folder /></el-icon>
-              <span>全部分类</span>
-            </el-menu-item>
-            <el-menu-item
-              v-for="category in categories"
-              :key="category.id"
-              :index="category.id.toString()"
+          <div class="tag-cloud">
+            <el-tag
+              :effect="activeTag ? 'plain' : 'dark'"
+              class="tag-chip"
+              @click="selectTag('')"
             >
-              <el-icon><Folder /></el-icon>
-              <span>{{ category.name }}</span>
-            </el-menu-item>
-          </el-menu>
+              全部标签
+            </el-tag>
+            <el-tag
+              v-for="tag in allTags"
+              :key="tag"
+              class="tag-chip"
+              :effect="activeTag === tag ? 'dark' : 'plain'"
+              @click="selectTag(tag)"
+            >
+              {{ tag }}
+            </el-tag>
+            <el-empty v-if="allTags.length === 0" description="暂无标签" :image-size="50" />
+          </div>
         </el-card>
 
         <!-- 我的学习进度 -->
@@ -151,13 +154,13 @@
             </template>
           </el-input>
 
-          <el-select v-model="activeCategoryId" placeholder="全部分类" class="search-select" @change="loadContents">
-            <el-option label="全部分类" :value="0" />
+          <el-select v-model="activeTag" placeholder="全部标签" clearable class="search-select" @change="loadContents">
+            <el-option label="全部标签" value="" />
             <el-option
-              v-for="category in categories"
-              :key="category.id"
-              :label="category.name"
-              :value="category.id"
+              v-for="tag in allTags"
+              :key="tag"
+              :label="tag"
+              :value="tag"
             />
           </el-select>
 
@@ -165,11 +168,12 @@
             <el-option label="文章" value="article" />
             <el-option label="视频" value="video" />
             <el-option label="图片" value="image" />
+            <el-option label="文档" value="document" />
             <el-option label="PDF" value="pdf" />
           </el-select>
 
           <el-button type="primary" round @click="handleSearch">搜索</el-button>
-          <el-button round @click="clearSearch" v-if="searchQuery || searchType || activeCategoryId">重置</el-button>
+          <el-button round @click="clearSearch" v-if="searchQuery || searchType || activeTag">重置</el-button>
         </div>
 
         <!-- 教师管理员操作栏 -->
@@ -189,7 +193,7 @@
           >
             <div class="card-cover" :class="`type-${content.content_type}`">
               <template v-if="content.content_type === 'video' && content.cover_image">
-                <img :src="resolveAssetUrl(content.cover_image)" :alt="content.title" />
+                <img v-lazy="resolveAssetUrl(content.cover_image)" :alt="content.title" />
               </template>
               <template v-if="content.content_type === 'video'">
                 <div class="play-overlay">
@@ -202,8 +206,11 @@
                   <span>自然科学小课堂</span>
                 </div>
               </template>
+              <template v-else-if="content.content_type === 'image' && content.file_path">
+                <img v-lazy="resolveAssetUrl(content.file_path)" :alt="content.title" />
+              </template>
               <template v-else-if="content.cover_image">
-                <img :src="resolveAssetUrl(content.cover_image)" :alt="content.title" />
+                <img v-lazy="resolveAssetUrl(content.cover_image)" :alt="content.title" />
               </template>
               <template v-else>
                 <div class="generic-cover">📘 教学资源</div>
@@ -239,6 +246,9 @@
             <div class="card-body">
               <h3 class="content-title">{{ content.title }}</h3>
               <p class="content-summary">{{ getContentSummary(content) }}</p>
+              <div v-if="content.tags && content.tags.length > 0" class="card-tags">
+                <el-tag v-for="tag in content.tags.slice(0, 3)" :key="tag" size="small" effect="plain"># {{ tag }}</el-tag>
+              </div>
               <p class="content-meta-line">
                 <span>发布者：{{ getPublisherName(content) }}</span>
                 <span>发布时间：{{ formatDateOrDash(content.published_at) }}</span>
@@ -261,37 +271,11 @@
         <div v-else class="empty-content-state app-glass-card">
           <div class="empty-plant">🌱</div>
           <h3>这里还没有找到教学内容</h3>
-          <p>{{ searchQuery || searchType || activeCategoryId ? '换个关键词或分类试试吧。' : '老师正在准备有趣的科学内容，稍后回来看看。' }}</p>
+          <p>{{ searchQuery || searchType || activeTag ? '换个关键词或标签试试吧。' : '老师正在准备有趣的科学内容，稍后回来看看。' }}</p>
           <el-button type="primary" round @click="handleEmptyAction">去学习</el-button>
         </div>
       </div>
     </div>
-
-    <!-- 分类编辑对话框 -->
-    <el-dialog v-model="showCategoryDialog" title="新建分类" width="400px">
-      <el-form :model="categoryForm" label-width="80px">
-        <el-form-item label="分类名称" required>
-          <el-input v-model="categoryForm.name" placeholder="如：农作物习性" />
-        </el-form-item>
-        <el-form-item label="分类描述">
-          <el-input v-model="categoryForm.description" type="textarea" :rows="3" />
-        </el-form-item>
-        <el-form-item label="父分类">
-          <el-select v-model="categoryForm.parent_id" placeholder="选择父分类（可选）" clearable>
-            <el-option
-              v-for="cat in categories"
-              :key="cat.id"
-              :label="cat.name"
-              :value="cat.id"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showCategoryDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitCategory">创建</el-button>
-      </template>
-    </el-dialog>
 
     <!-- 内容编辑对话框 -->
     <el-dialog
@@ -303,14 +287,17 @@
         <el-form-item label="标题" required>
           <el-input v-model="contentForm.title" placeholder="输入标题" />
         </el-form-item>
-        <el-form-item label="分类" required>
-          <el-select v-model="contentForm.category_id" placeholder="选择分类">
-            <el-option
-              v-for="cat in categories"
-              :key="cat.id"
-              :label="cat.name"
-              :value="cat.id"
-            />
+        <el-form-item label="标签" required>
+          <el-select
+            v-model="contentForm.tags"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="输入或选择一个或多个标签"
+            style="width: 100%"
+          >
+            <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag" />
           </el-select>
         </el-form-item>
         <el-form-item label="类型" required>
@@ -318,14 +305,53 @@
             <el-radio label="article">文章</el-radio>
             <el-radio label="video">视频</el-radio>
             <el-radio label="image">图片</el-radio>
+            <el-radio label="document">文档</el-radio>
             <el-radio label="pdf">PDF</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="封面图">
-          <el-input v-model="contentForm.cover_image" placeholder="封面图 URL" />
+          <div class="upload-row">
+            <el-upload
+              :show-file-list="false"
+              :before-upload="beforeCoverUpload"
+              :http-request="handleCoverUpload"
+            >
+              <el-button>上传封面图</el-button>
+            </el-upload>
+            <span class="upload-tip">建议上传 jpg/png/webp 格式</span>
+          </div>
+          <img
+            v-if="contentForm.cover_image"
+            v-lazy="resolveAssetUrl(contentForm.cover_image)"
+            class="preview-thumb"
+            alt="封面图"
+          />
         </el-form-item>
-        <el-form-item label="视频链接" v-if="contentForm.content_type === 'video'">
-          <el-input v-model="contentForm.video_url" placeholder="视频 URL" />
+        <el-form-item label="视频文件" v-if="contentForm.content_type === 'video'">
+          <div class="upload-row">
+            <el-upload
+              :show-file-list="false"
+              :before-upload="beforeVideoUpload"
+              :http-request="handleVideoUpload"
+            >
+              <el-button>上传视频</el-button>
+            </el-upload>
+            <span class="upload-tip">支持 mp4/mov/avi/webm，最大 50MB</span>
+          </div>
+          <div v-if="contentForm.video_url" class="file-link-inline">{{ contentForm.video_url }}</div>
+        </el-form-item>
+        <el-form-item label="附件上传" v-if="contentForm.content_type === 'image' || contentForm.content_type === 'document' || contentForm.content_type === 'pdf'">
+          <div class="upload-row">
+            <el-upload
+              :show-file-list="false"
+              :before-upload="beforeAttachmentUpload"
+              :http-request="handleAttachmentUpload"
+            >
+              <el-button>上传附件</el-button>
+            </el-upload>
+            <span class="upload-tip">文档支持 Word/PPT/PDF，图片支持常见格式</span>
+          </div>
+          <div v-if="contentForm.file_path" class="file-link-inline">{{ contentForm.file_path }}</div>
         </el-form-item>
         <el-form-item label="内容" v-if="contentForm.content_type === 'article'">
           <div class="md-editor-shell">
@@ -390,7 +416,9 @@
           <el-tag :type="getTypeTag(currentContent.content_type)">
             {{ getTypeText(currentContent.content_type) }}
           </el-tag>
-          <span class="meta-text">分类：{{ currentContent.category?.name }}</span>
+          <span class="meta-text" v-if="currentContent.tags && currentContent.tags.length > 0">
+            标签：{{ currentContent.tags.join(' / ') }}
+          </span>
           <span class="meta-text">发布者：{{ getPublisherName(currentContent) }}</span>
           <span class="meta-text">发布时间：{{ formatDateOrDash(currentContent.published_at) }}</span>
           <span class="meta-text">阅读：{{ currentContent.view_count }}</span>
@@ -417,7 +445,28 @@
         
         <!-- 视频内容 -->
         <div v-if="currentContent.content_type === 'video' && currentContent.video_url" class="video-container">
-          <video :src="currentContent.video_url" controls style="width: 100%; max-height: 500px;"></video>
+          <video :src="resolveAssetUrl(currentContent.video_url)" controls style="width: 100%; max-height: 500px;"></video>
+        </div>
+
+        <!-- 图片内容 -->
+        <div v-if="currentContent.content_type === 'image' && currentContent.file_path" class="image-container">
+          <img v-lazy="resolveAssetUrl(currentContent.file_path)" :alt="currentContent.title" class="detail-image" />
+        </div>
+
+        <!-- 文档内容 -->
+        <div
+          v-if="(currentContent.content_type === 'document' || currentContent.content_type === 'pdf') && currentContent.file_path"
+          class="doc-container"
+        >
+          <el-alert
+            title="该资源为附件文件，请点击下方链接在线查看或下载。"
+            type="info"
+            :closable="false"
+            show-icon
+          />
+          <a class="doc-link" :href="resolveAssetUrl(currentContent.file_path)" target="_blank" rel="noopener noreferrer">
+            打开附件
+          </a>
         </div>
         
         <!-- 文章内容 -->
@@ -516,23 +565,20 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Folder, Search, VideoPlay, Edit, Delete, View, Hide } from '@element-plus/icons-vue';
+import { Search, VideoPlay, Edit, Delete, View, Hide } from '@element-plus/icons-vue';
+import type { UploadRequestOptions } from 'element-plus';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import MarkdownIt from 'markdown-it';
-import { getErrorMessage } from '../utils/error';
+import { getActionErrorMessage, getErrorMessage } from '../utils/error';
 import { clearAuthSession, getUserRole } from '../utils/authSession';
 import { resolveBackendAssetUrl } from '../api';
 import {
-  getCategories,
-  getCategoriesTree,
-  createCategory,
-  updateCategory,
-  deleteCategory,
   getContents,
   getContent,
   createContent,
   updateContent,
   deleteContent,
+  uploadTeachingContentFile,
   publishContent,
   getMyLearning,
   startLearning,
@@ -545,7 +591,6 @@ import {
   getStudentsProgress
 } from '../api/teaching';
 import type {
-  ContentCategory,
   ContentComment,
   LearningStatsResponse,
   StudentLearningRecord,
@@ -555,6 +600,7 @@ import type {
   TeachingContentListItem,
 } from '../api/teaching';
 import NotificationBell from '../components/NotificationBell.vue';
+import { createFileValidator } from '../composables/useFileValidation';
 
 const router = useRouter();
 const route = useRoute();
@@ -581,26 +627,31 @@ const userRoleText = computed(() => {
   return '学生';
 });
 
-// 分类相关
-const categories = ref<ContentCategory[]>([]);
-const activeCategoryId = ref(0);
-const showCategoryDialog = ref(false);
-const categoryForm = ref({
-  name: '',
-  description: '',
-  parent_id: undefined as number | undefined
-});
+const activeTag = ref('');
 
 // 内容相关
 const contents = ref<TeachingContentListItem[]>([]);
+const allTags = computed(() => {
+  const set = new Set<string>();
+  for (const item of contents.value) {
+    for (const tag of item.tags || []) {
+      const trimmed = (tag || '').trim();
+      if (trimmed) {
+        set.add(trimmed);
+      }
+    }
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+});
 const showContentEditor = ref(false);
 const editingContent = ref<TeachingContentListItem | null>(null);
 const defaultContentForm = (): TeachingContentCreatePayload => ({
   title: '',
-  category_id: 0,
+  tags: [],
   content_type: 'article',
   content: '',
   video_url: '',
+  file_path: '',
   cover_image: '',
   is_published: false
 });
@@ -683,18 +734,10 @@ const openStatsDialog = () => {
 };
 
 // 加载数据
-const loadCategories = async () => {
-  try {
-    categories.value = await getCategories();
-  } catch (error: any) {
-    ElMessage.error(getErrorMessage(error, '加载分类失败'));
-  }
-};
-
 const loadContents = async () => {
   try {
     const params: any = {};
-    if (activeCategoryId.value) params.category_id = activeCategoryId.value;
+    if (activeTag.value) params.tag = activeTag.value;
     if (searchType.value) params.content_type = searchType.value;
     if (searchQuery.value) params.search = searchQuery.value;
     const response = await getContents(params);
@@ -714,9 +757,8 @@ const loadLearningRecords = async () => {
   }
 };
 
-// 分类选择
-const handleCategorySelect = (index: string) => {
-  activeCategoryId.value = parseInt(index);
+const selectTag = (value: string) => {
+  activeTag.value = value;
   loadContents();
 };
 
@@ -726,6 +768,7 @@ const getTypeTag = (type: string) => {
     article: '',
     video: 'warning',
     image: 'success',
+    document: 'info',
     pdf: 'danger'
   };
   return map[type] || '';
@@ -736,26 +779,10 @@ const getTypeText = (type: string) => {
     article: '文章',
     video: '视频',
     image: '图片',
+    document: '文档',
     pdf: 'PDF'
   };
   return map[type] || type;
-};
-
-// 分类管理
-const submitCategory = async () => {
-  if (!categoryForm.value.name) {
-    ElMessage.warning('请输入分类名称');
-    return;
-  }
-  try {
-    await createCategory(categoryForm.value);
-    ElMessage.success('分类创建成功');
-    showCategoryDialog.value = false;
-    loadCategories();
-    categoryForm.value = { name: '', description: '', parent_id: undefined };
-  } catch (error: any) {
-    ElMessage.error(getErrorMessage(error, '创建失败'));
-  }
 };
 
 // 内容管理
@@ -764,10 +791,11 @@ const editContent = (content: TeachingContentListItem) => {
   mdEditorTab.value = 'edit';
   contentForm.value = {
     title: content.title,
-    category_id: content.category_id,
+    tags: content.tags || [],
     content_type: content.content_type,
     content: content.content || '',
     video_url: content.video_url || '',
+    file_path: content.file_path || '',
     cover_image: content.cover_image || '',
     is_published: content.is_published
   };
@@ -932,24 +960,146 @@ const handleAssistantInsert = (event: Event) => {
   ElMessage.success('已插入 AI 生成内容（Markdown）');
 };
 
+const uploadContentAsset = async (
+  file: File,
+  assignUrl: (url: string) => void,
+  successText: string,
+) => {
+  try {
+    const result = await uploadTeachingContentFile(file);
+    assignUrl(result.url);
+    ElMessage.success(successText);
+  } catch (error: any) {
+    ElMessage.error(getErrorMessage(error, '文件上传失败'));
+    throw error;
+  }
+};
+
+const validateCoverUpload = createFileValidator(
+  {
+    allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+    maxSizeMB: 10,
+    extensionMessage: '封面图仅支持 jpg/jpeg/png/webp/gif',
+    sizeMessage: '封面图大小不能超过 10MB',
+  },
+  (message) => ElMessage.error(message),
+);
+
+const validateVideoUpload = createFileValidator(
+  {
+    allowedExtensions: ['mp4', 'mov', 'avi', 'webm'],
+    maxSizeMB: 50,
+    extensionMessage: '视频仅支持 mp4/mov/avi/webm',
+    sizeMessage: '视频大小不能超过 50MB',
+  },
+  (message) => ElMessage.error(message),
+);
+
+const validateAttachmentUpload = createFileValidator(
+  {
+    allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf', 'doc', 'docx', 'ppt', 'pptx'],
+    maxSizeMB: 50,
+    extensionMessage: '附件仅支持图片、Word、PPT、PDF',
+    sizeMessage: '附件大小不能超过 50MB',
+  },
+  (message) => ElMessage.error(message),
+);
+
+const beforeCoverUpload = (file: File) => validateCoverUpload(file);
+
+const beforeVideoUpload = (file: File) => validateVideoUpload(file);
+
+const beforeAttachmentUpload = (file: File) => validateAttachmentUpload(file);
+
+const handleCoverUpload = async (option: UploadRequestOptions) => {
+  try {
+    await uploadContentAsset(option.file as File, (url) => {
+      contentForm.value.cover_image = url;
+    }, '封面图上传成功');
+    option.onSuccess?.({}, option.file);
+  } catch (error: any) {
+    option.onError?.(error);
+  }
+};
+
+const handleVideoUpload = async (option: UploadRequestOptions) => {
+  try {
+    await uploadContentAsset(option.file as File, (url) => {
+      contentForm.value.video_url = url;
+    }, '视频上传成功');
+    option.onSuccess?.({}, option.file);
+  } catch (error: any) {
+    option.onError?.(error);
+  }
+};
+
+const handleAttachmentUpload = async (option: UploadRequestOptions) => {
+  try {
+    await uploadContentAsset(option.file as File, (url) => {
+      contentForm.value.file_path = url;
+    }, '附件上传成功');
+    option.onSuccess?.({}, option.file);
+  } catch (error: any) {
+    option.onError?.(error);
+  }
+};
+
 const submitContent = async () => {
-  if (!contentForm.value.title || !contentForm.value.category_id) {
+  if (!contentForm.value.title.trim()) {
+    ElMessage.warning('请填写标题');
+    return;
+  }
+
+  if (!contentForm.value.tags || contentForm.value.tags.length === 0) {
+    ElMessage.warning('请至少设置一个标签');
+    return;
+  }
+
+  if (contentForm.value.content_type === 'video' && !contentForm.value.video_url) {
+    ElMessage.warning('请先上传视频文件');
+    return;
+  }
+
+  if (
+    ['image', 'document', 'pdf'].includes(contentForm.value.content_type)
+    && !contentForm.value.file_path
+  ) {
+    ElMessage.warning('请先上传附件文件');
+    return;
+  }
+
+  if (contentForm.value.content_type === 'article' && !(contentForm.value.content || '').trim()) {
+    ElMessage.warning('请输入文章内容');
+    return;
+  }
+
+  const payload: TeachingContentCreatePayload = {
+    ...contentForm.value,
+    title: contentForm.value.title.trim(),
+    tags: (contentForm.value.tags || []).map((item) => item.trim()).filter(Boolean),
+  };
+
+  if (payload.tags.length === 0) {
     ElMessage.warning('请填写必填项');
     return;
   }
+
   try {
     if (editingContent.value) {
-      await updateContent(editingContent.value.id, contentForm.value);
+      await updateContent(editingContent.value.id, payload);
       ElMessage.success('更新成功');
     } else {
-      await createContent(contentForm.value);
+      await createContent(payload);
       ElMessage.success('创建成功');
     }
     showContentEditor.value = false;
     loadContents();
     resetContentEditor();
   } catch (error: any) {
-    ElMessage.error(getErrorMessage(error, '操作失败'));
+    ElMessage.error(getActionErrorMessage(error, {
+      action: editingContent.value ? '更新教学内容' : '创建教学内容',
+      fallback: '保存失败，请检查内容后重试',
+    }));
   }
 };
 
@@ -987,7 +1137,10 @@ const togglePublish = async (content: TeachingContentListItem | TeachingContentD
       await loadContentDetail();
     }
   } catch (error: any) {
-    ElMessage.error(getErrorMessage(error, '操作失败'));
+    ElMessage.error(getActionErrorMessage(error, {
+      action: '切换发布状态',
+      fallback: '切换发布状态失败，请稍后重试',
+    }));
   }
 };
 
@@ -1039,7 +1192,10 @@ const markAsComplete = async () => {
     ElMessage.success('已标记为完成');
     loadLearningRecords();
   } catch (error: any) {
-    ElMessage.error(getErrorMessage(error, '操作失败'));
+    ElMessage.error(getActionErrorMessage(error, {
+      action: '标记学习完成',
+      fallback: '标记失败，请稍后重试',
+    }));
   }
 };
 
@@ -1095,7 +1251,10 @@ const toggleLike = async (comment: ContentComment) => {
     comment.liked = result.liked;
     comment.like_count = result.like_count;
   } catch (error: any) {
-    ElMessage.error(getErrorMessage(error, '点赞操作失败'));
+    ElMessage.error(getActionErrorMessage(error, {
+      action: '点赞',
+      fallback: '点赞失败，请稍后重试',
+    }));
   }
 };
 
@@ -1138,6 +1297,9 @@ const getContentSummary = (content: TeachingContentListItem | TeachingContentDet
   if (content.content_type === 'image') {
     return '图片资料，适合观察现象与记录细节。';
   }
+  if (content.content_type === 'document') {
+    return '文档资料，支持线下课堂下载配合讲解。';
+  }
   return '点击查看完整教学内容。';
 };
 
@@ -1170,7 +1332,7 @@ const handleSearch = () => {
 const clearSearch = () => {
   searchQuery.value = '';
   searchType.value = '';
-  activeCategoryId.value = 0;
+  activeTag.value = '';
   loadContents();
 };
 
@@ -1201,7 +1363,6 @@ const handleLogout = () => {
 };
 
 onMounted(() => {
-  loadCategories();
   loadContents();
   loadLearningRecords();
   window.addEventListener(TEACHING_INSERT_CONTENT_EVENT, handleAssistantInsert as EventListener);
@@ -1272,6 +1433,16 @@ watch(
   flex-shrink: 0;
 }
 
+
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-chip {
+  cursor: pointer;
+}
 .mt-4 {
   margin-top: 20px;
 }
@@ -1282,16 +1453,79 @@ watch(
   align-items: center;
 }
 
+.card-tags {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .learning-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.upload-tip {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.preview-thumb {
+  margin-top: 10px;
+  width: 180px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-light);
+}
+
+.file-link-inline {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  word-break: break-all;
+}
+
 .learning-item {
   cursor: pointer;
   padding: 8px 0;
   border-bottom: 1px solid var(--el-border-color-light);
+}
+
+.image-container {
+  margin: 20px 0;
+}
+
+.detail-image {
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-light);
+}
+
+.doc-container {
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.doc-link {
+  color: var(--el-color-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.doc-link:hover {
+  text-decoration: underline;
 }
 
 .learning-item:hover {

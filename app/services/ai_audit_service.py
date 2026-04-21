@@ -21,10 +21,10 @@ def infer_fallback_reason(source: str) -> str | None:
     if source == "stream-error":
         return "stream_connection_or_provider_error"
     if source.startswith("rule-based"):
-        if not settings.qwen_api_key:
-            return "missing_qwen_api_key"
+        if not settings.deepseek_api_key:
+            return "missing_deepseek_api_key"
         return "model_call_failed_or_empty"
-    if source in {"qwen", "deepseek", "llm"}:
+    if source in {"deepseek", "llm"}:
         if settings.ai_langchain_enabled:
             return "langchain_path_failed_or_disabled_at_runtime"
     return None

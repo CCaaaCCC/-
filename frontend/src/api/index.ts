@@ -201,6 +201,31 @@ export const login = async (username: string, password: string) => {
     return response.data;
 };
 
+export interface RegisterPayload {
+    username: string;
+    password: string;
+    role: 'student' | 'teacher';
+    invite_code: string;
+    real_name?: string;
+    email?: string;
+    student_id?: string;
+    teacher_id?: string;
+}
+
+export interface RegisterResult {
+    id: number;
+    username: string;
+    role: string;
+    class_id?: number | null;
+    created_by?: number | null;
+    message: string;
+}
+
+export const registerUser = async (payload: RegisterPayload): Promise<RegisterResult> => {
+    const response = await api.post<RegisterResult>('/auth/register', payload);
+    return response.data;
+};
+
 // Logout function
 export const logoutUser = async () => {
     try {
@@ -228,13 +253,17 @@ export interface Device {
     last_seen: string | null;
     pump_state: number;
     fan_state: number;
+    fan_speed: number;
     light_state: number;
+    light_brightness: number;
 }
 
 export interface ControlRequest {
     pump_state?: number;
     fan_state?: number;
+    fan_speed?: number;
     light_state?: number;
+    light_brightness?: number;
 }
 
 export interface DeviceCreateRequest {
@@ -242,7 +271,9 @@ export interface DeviceCreateRequest {
     status?: number;
     pump_state?: number;
     fan_state?: number;
+    fan_speed?: number;
     light_state?: number;
+    light_brightness?: number;
 }
 
 export interface Assignment {
@@ -264,6 +295,13 @@ export interface Assignment {
     is_published: boolean;
     can_manage?: boolean;
     can_grade?: boolean;
+}
+
+export interface AssignmentListResponse {
+    items: Assignment[];
+    total: number;
+    page: number;
+    page_size: number;
 }
 
 export interface PlantProfileItem {
@@ -390,31 +428,11 @@ export interface AssignmentAIFeedback {
     };
 }
 
-export interface ContentCategory {
-    id: number;
-    name: string;
-    description?: string | null;
-    parent_id?: number | null;
-    sort_order: number;
-    created_at: string;
-}
-
-export interface ContentCategoryPayload {
-    name: string;
-    description?: string;
-    parent_id?: number;
-    sort_order?: number;
-}
-
-export interface ContentCategoryTreeNode extends ContentCategory {
-    children?: ContentCategory[];
-}
-
-export type TeachingContentType = 'article' | 'video' | 'image' | 'pdf';
+export type TeachingContentType = 'article' | 'video' | 'image' | 'document' | 'pdf';
 
 export interface TeachingContentBasePayload {
     title: string;
-    category_id: number;
+    tags: string[];
     content_type: TeachingContentType | string;
     content?: string;
     video_url?: string;
@@ -433,8 +451,7 @@ export type TeachingContentUpdatePayload = Partial<TeachingContentBasePayload> &
 export interface TeachingContentListItem {
     id: number;
     title: string;
-    category_id: number;
-    category_name?: string | null;
+    tags: string[];
     content_type: TeachingContentType | string;
     content?: string | null;
     video_url?: string | null;
@@ -454,12 +471,10 @@ export interface TeachingContentListItem {
     can_publish?: boolean;
 }
 
-export interface TeachingContentDetail extends TeachingContentListItem {
-    category?: ContentCategory | null;
-}
+export interface TeachingContentDetail extends TeachingContentListItem {}
 
 export interface ContentListParams {
-    category_id?: number;
+    tag?: string;
     content_type?: string;
     is_published?: boolean;
     search?: string;
@@ -541,6 +556,53 @@ export interface StudentProgress {
     total_time_spent: number;
 }
 
+export type MarketProductStatus = 'on_sale' | 'sold' | 'off_shelf';
+
+export interface MarketProduct {
+    id: number;
+    title: string;
+    description?: string | null;
+    price?: number | null;
+    location: string;
+    contact_info: string;
+    image_url?: string | null;
+    seller_id: number;
+    seller_name?: string | null;
+    status: MarketProductStatus | string;
+    view_count: number;
+    created_at: string;
+    updated_at: string;
+    can_edit?: boolean;
+    can_delete?: boolean;
+}
+
+export interface MarketProductCreatePayload {
+    title: string;
+    description?: string;
+    price?: number;
+    location: string;
+    contact_info: string;
+    image_url?: string;
+    status?: MarketProductStatus;
+}
+
+export interface MarketProductUpdatePayload {
+    title?: string;
+    description?: string;
+    price?: number;
+    location?: string;
+    contact_info?: string;
+    image_url?: string;
+    status?: MarketProductStatus;
+}
+
+export interface MarketProductListResponse {
+    items: MarketProduct[];
+    total: number;
+    page: number;
+    page_size: number;
+}
+
 export interface TelemetryRealtimePayload {
     type: 'snapshot' | 'telemetry_update' | 'control_update';
     device_id: number;
@@ -554,7 +616,9 @@ export interface TelemetryRealtimePayload {
     actuators: {
         pump_state: number;
         fan_state: number;
+        fan_speed: number;
         light_state: number;
+        light_brightness: number;
     };
 }
 
@@ -584,7 +648,7 @@ export interface AISourceLink {
 
 export interface AIScienceAskResponse {
     answer: string;
-    source: 'qwen' | 'rule-based' | string;
+    source: string;
     model: string;
     deep_thinking: boolean;
     web_search_enabled: boolean;
@@ -638,8 +702,6 @@ export interface AIConversationDetail {
     last_message_at?: string | null;
     messages: AIConversationMessage[];
 }
-
-export type DemoScenario = 'drought' | 'heatwave' | 'low_light' | 'healthy';
 
 // API functions
 export const getDevices = async (): Promise<Device[]> => {
@@ -856,11 +918,6 @@ export const streamScienceAssistantInConversation = async (
     );
 };
 
-export const triggerDemoScenario = async (deviceId: number, scenario: DemoScenario): Promise<{ status: string; scenario: string; message: string }> => {
-    const response = await api.post(`/demo/scenario/${deviceId}`, { scenario });
-    return response.data;
-};
-
 export const createTelemetrySocket = (
     deviceId: number,
     onMessage: (payload: TelemetryRealtimePayload) => void,
@@ -940,6 +997,11 @@ export const createClass = async (cls: {
     teacher_id?: number;
 }): Promise<any> => {
     const response = await api.post('/classes', cls);
+    return response.data;
+};
+
+export const refreshClassInviteCode = async (classId: number): Promise<any> => {
+    const response = await api.post(`/classes/${classId}/refresh-invite-code`);
     return response.data;
 };
 
@@ -1046,33 +1108,19 @@ export const batchResetPassword = async (userIds: number[], newPassword: string)
 };
 
 // 教学内容管理 API
-export const getCategories = async (): Promise<ContentCategory[]> => {
-    const response = await api.get('/content/categories');
-    return response.data;
-};
-
-export const createCategory = async (category: ContentCategoryPayload): Promise<ContentCategory> => {
-    const response = await api.post<ContentCategory>('/content/categories', category);
-    return response.data;
-};
-
-export const getCategoriesTree = async (): Promise<ContentCategoryTreeNode[]> => {
-    const response = await api.get<ContentCategoryTreeNode[]>('/content/categories/tree');
-    return response.data;
-};
-
-export const updateCategory = async (id: number, category: ContentCategoryPayload): Promise<ContentCategory> => {
-    const response = await api.put<ContentCategory>(`/content/categories/${id}`, category);
-    return response.data;
-};
-
-export const deleteCategory = async (id: number): Promise<{ message: string }> => {
-    const response = await api.delete<{ message: string }>(`/content/categories/${id}`);
-    return response.data;
-};
-
 export const getContents = async (params?: ContentListParams): Promise<ContentListResponse> => {
     const response = await api.get<ContentListResponse>('/content/contents', { params });
+    return response.data;
+};
+
+export const uploadTeachingContentFile = async (
+    file: File
+): Promise<{ url: string; filename: string; size: number }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/content/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
     return response.data;
 };
 
@@ -1150,9 +1198,55 @@ export const getStudentsProgress = async (): Promise<StudentProgress[]> => {
     return response.data;
 };
 
+// 线下商城 API
+export const getMarketProducts = async (params?: {
+    search?: string;
+    status?: MarketProductStatus | string;
+    mine?: boolean;
+    page?: number;
+    page_size?: number;
+}): Promise<MarketProductListResponse> => {
+    const response = await api.get<MarketProductListResponse>('/market/products', { params });
+    return response.data;
+};
+
+export const getMarketProduct = async (id: number): Promise<MarketProduct> => {
+    const response = await api.get<MarketProduct>(`/market/products/${id}`);
+    return response.data;
+};
+
+export const createMarketProduct = async (payload: MarketProductCreatePayload): Promise<MarketProduct> => {
+    const response = await api.post<MarketProduct>('/market/products', payload);
+    return response.data;
+};
+
+export const updateMarketProduct = async (
+    id: number,
+    payload: MarketProductUpdatePayload
+): Promise<MarketProduct> => {
+    const response = await api.put<MarketProduct>(`/market/products/${id}`, payload);
+    return response.data;
+};
+
+export const deleteMarketProduct = async (id: number): Promise<{ message: string }> => {
+    const response = await api.delete<{ message: string }>(`/market/products/${id}`);
+    return response.data;
+};
+
+export const uploadMarketImage = async (
+    file: File
+): Promise<{ url: string; filename: string; size: number }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/market/upload-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+};
+
 // 实验报告 API
-export const getAssignments = async (params?: any): Promise<any[]> => {
-    const response = await api.get('/assignments', { params });
+export const getAssignments = async (params?: any): Promise<Assignment[] | AssignmentListResponse> => {
+    const response = await api.get<Assignment[] | AssignmentListResponse>('/assignments', { params });
     return response.data;
 };
 

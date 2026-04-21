@@ -21,8 +21,12 @@ app.add_middleware(
 UPLOAD_ROOT = "uploads"
 PLANT_UPLOAD_DIR = os.path.join(UPLOAD_ROOT, "plants")
 AVATAR_UPLOAD_DIR = os.path.join(UPLOAD_ROOT, "avatars")
+CONTENT_UPLOAD_DIR = os.path.join(UPLOAD_ROOT, "content")
+MARKET_UPLOAD_DIR = os.path.join(UPLOAD_ROOT, "market")
 os.makedirs(PLANT_UPLOAD_DIR, exist_ok=True)
 os.makedirs(AVATAR_UPLOAD_DIR, exist_ok=True)
+os.makedirs(CONTENT_UPLOAD_DIR, exist_ok=True)
+os.makedirs(MARKET_UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_ROOT), name="uploads")
 
 # --- 初始化数据 ---
@@ -45,6 +49,7 @@ from app.api.routes.history import router as history_router
 from app.api.routes.plants import router as plants_router
 from app.api.routes.groups import router as groups_router
 from app.api.routes.logs import router as logs_router
+from app.api.routes.market import router as market_router
 
 app.include_router(auth_router)
 app.include_router(assignments_router)
@@ -56,6 +61,7 @@ app.include_router(history_router)
 app.include_router(plants_router)
 app.include_router(groups_router)
 app.include_router(logs_router)
+app.include_router(market_router)
 
 
 if __name__ == "__main__":

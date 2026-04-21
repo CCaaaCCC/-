@@ -1,14 +1,15 @@
 import datetime
+import os
 import time
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.dependencies import get_admin_user, get_content_editor, get_current_user, get_db, get_teacher_user
 from app.db.models import (
-    ContentCategory,
     ContentComment,
     ContentCommentLike,
     StudentLearningRecord,
@@ -18,9 +19,6 @@ from app.db.models import (
 from app.schemas.content import (
     ContentAIPolishRequest,
     ContentAIPolishResponse,
-    ContentCategoryCreate,
-    ContentCategoryResponse,
-    ContentCategoryWithChildren,
     ContentCommentCreate,
     ContentCommentLikeResponse,
     ContentCommentReplyCreate,
@@ -41,6 +39,79 @@ from app.services.rag_service import rebuild_published_content_index, sync_teach
 
 router = APIRouter(tags=["content"])
 
+UPLOAD_ROOT = "uploads"
+CONTENT_UPLOAD_DIR = os.path.join(UPLOAD_ROOT, "content")
+ALLOWED_CONTENT_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".webp", ".gif",
+    ".mp4", ".mov", ".avi", ".webm",
+    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+}
+MAX_CONTENT_FILE_SIZE = 50 * 1024 * 1024
+MAX_PAGE_SIZE = 100
+
+
+def _safe_remove_local_upload(path_or_url: str | None) -> bool:
+    if not path_or_url:
+        return False
+
+    raw = path_or_url.strip()
+    if not raw:
+        return False
+
+    normalized = raw.replace("\\", "/")
+    if normalized.startswith("http://") or normalized.startswith("https://"):
+        return False
+
+    relative = normalized.lstrip("/")
+    if relative.startswith("uploads/"):
+        relative = relative[len("uploads/") :]
+    if not relative.startswith("content/"):
+        return False
+
+    candidate = os.path.abspath(os.path.join(UPLOAD_ROOT, relative))
+    allowed_root = os.path.abspath(CONTENT_UPLOAD_DIR)
+    if not (candidate == allowed_root or candidate.startswith(allowed_root + os.sep)):
+        return False
+    if not os.path.isfile(candidate):
+        return False
+
+    try:
+        os.remove(candidate)
+        return True
+    except OSError:
+        return False
+
+
+def _normalize_tags(tags: list[str] | None) -> list[str]:
+    if not tags:
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in tags:
+        value = (item or "").strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        result.append(value)
+    return result
+
+
+def _parse_tags(tags_raw: str | None) -> list[str]:
+    if not tags_raw:
+        return []
+    return _normalize_tags(tags_raw.split(","))
+
+
+def _join_tags(tags: list[str] | None) -> str | None:
+    normalized = _normalize_tags(tags)
+    if not normalized:
+        return None
+    return ",".join(normalized)
+
 
 def _display_name(user: User | None) -> str | None:
     if not user:
@@ -60,18 +131,14 @@ def _content_permissions(content: TeachingContent, current_user: User) -> dict[s
 def _serialize_teaching_content(
     content: TeachingContent,
     current_user: User,
-    *,
-    include_category: bool = False,
 ) -> dict[str, object]:
-    category = getattr(content, "category", None)
     author = getattr(content, "author", None)
     author_name = _display_name(author)
 
     payload: dict[str, object] = {
         "id": content.id,
         "title": content.title,
-        "category_id": content.category_id,
-        "category_name": getattr(category, "name", None),
+        "tags": _parse_tags(content.tags),
         "content_type": content.content_type,
         "content": content.content,
         "video_url": content.video_url,
@@ -88,20 +155,6 @@ def _serialize_teaching_content(
         "updated_at": content.updated_at,
         **_content_permissions(content, current_user),
     }
-
-    if include_category:
-        if category:
-            payload["category"] = {
-                "id": category.id,
-                "name": category.name,
-                "description": category.description,
-                "parent_id": category.parent_id,
-                "sort_order": category.sort_order,
-                "created_at": category.created_at,
-            }
-        else:
-            payload["category"] = None
-
     return payload
 
 
@@ -190,124 +243,10 @@ def _serialize_comment_rows(
     return roots
 
 
-# ---------------- 分类管理 ----------------
-@router.get("/api/content/categories", response_model=list[ContentCategoryResponse])
-async def get_categories(db: Session = Depends(get_db)):
-    """获取所有分类（按排序排序）"""
-    categories = (
-        db.query(ContentCategory)
-        .filter(ContentCategory.parent_id == None)
-        .order_by(ContentCategory.sort_order)
-        .all()
-    )
-    return categories
-
-
-@router.get("/api/content/categories/tree", response_model=list[ContentCategoryWithChildren])
-async def get_categories_tree(db: Session = Depends(get_db)):
-    """获取分类树形结构"""
-    parent_categories = (
-        db.query(ContentCategory)
-        .filter(ContentCategory.parent_id == None)
-        .order_by(ContentCategory.sort_order)
-        .all()
-    )
-
-    result = []
-    for parent in parent_categories:
-        parent_dict = ContentCategoryWithChildren(
-            id=parent.id,
-            name=parent.name,
-            description=parent.description,
-            parent_id=parent.parent_id,
-            sort_order=parent.sort_order,
-            created_at=parent.created_at,
-            children=[],
-        )
-        children = (
-            db.query(ContentCategory)
-            .filter(ContentCategory.parent_id == parent.id)
-            .order_by(ContentCategory.sort_order)
-            .all()
-        )
-        parent_dict.children = [
-            ContentCategoryResponse(
-                id=child.id,
-                name=child.name,
-                description=child.description,
-                parent_id=child.parent_id,
-                sort_order=child.sort_order,
-                created_at=child.created_at,
-            )
-            for child in children
-        ]
-        result.append(parent_dict)
-
-    return result
-
-
-@router.post("/api/content/categories", response_model=ContentCategoryResponse)
-async def create_category(
-    category: ContentCategoryCreate,
-    current_user: User = Depends(get_content_editor),
-    db: Session = Depends(get_db),
-):
-    """创建分类（教师/管理员）"""
-    db_category = ContentCategory(**category.model_dump())
-    db.add(db_category)
-    db.commit()
-    db.refresh(db_category)
-    return db_category
-
-
-@router.put("/api/content/categories/{category_id}", response_model=ContentCategoryResponse)
-async def update_category(
-    category_id: int,
-    category: ContentCategoryCreate,
-    current_user: User = Depends(get_content_editor),
-    db: Session = Depends(get_db),
-):
-    """更新分类（教师/管理员）"""
-    db_category = db.query(ContentCategory).filter(ContentCategory.id == category_id).first()
-    if not db_category:
-        raise HTTPException(status_code=404, detail="分类不存在")
-
-    for key, value in category.model_dump().items():
-        setattr(db_category, key, value)
-
-    db.commit()
-    db.refresh(db_category)
-    return db_category
-
-
-@router.delete("/api/content/categories/{category_id}")
-async def delete_category(
-    category_id: int,
-    current_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_db),
-):
-    """删除分类（仅管理员）"""
-    db_category = db.query(ContentCategory).filter(ContentCategory.id == category_id).first()
-    if not db_category:
-        raise HTTPException(status_code=404, detail="分类不存在")
-
-    has_children = db.query(ContentCategory).filter(ContentCategory.parent_id == category_id).first()
-    if has_children:
-        raise HTTPException(status_code=400, detail="请先删除子分类")
-
-    has_contents = db.query(TeachingContent).filter(TeachingContent.category_id == category_id).first()
-    if has_contents:
-        raise HTTPException(status_code=400, detail="请先删除该分类下的内容")
-
-    db.delete(db_category)
-    db.commit()
-    return {"message": "分类已删除"}
-
-
 # ---------------- 内容管理 ----------------
 @router.get("/api/content/contents")
 async def get_contents(
-    category_id: Optional[int] = None,
+    tag: Optional[str] = None,
     content_type: Optional[str] = None,
     is_published: Optional[bool] = None,
     search: Optional[str] = None,
@@ -317,16 +256,21 @@ async def get_contents(
     current_user: User = Depends(get_current_user),
 ):
     """获取内容列表（支持筛选和搜索/分页）"""
+    if page < 1:
+        raise HTTPException(status_code=400, detail="页码必须大于等于 1")
+    if page_size < 1 or page_size > MAX_PAGE_SIZE:
+        raise HTTPException(status_code=400, detail=f"page_size 必须在 1 到 {MAX_PAGE_SIZE} 之间")
+
     query = db.query(TeachingContent).options(
-        joinedload(TeachingContent.category),
         joinedload(TeachingContent.author),
     )
 
     if current_user.role not in ["teacher", "admin"]:
         is_published = True
 
-    if category_id:
-        query = query.filter(TeachingContent.category_id == category_id)
+    if tag:
+        tag_pattern = f"%{tag.strip()}%"
+        query = query.filter(TeachingContent.tags.like(tag_pattern))
     if content_type:
         query = query.filter(TeachingContent.content_type == content_type)
     if is_published is not None:
@@ -337,6 +281,7 @@ async def get_contents(
         query = query.filter(
             (TeachingContent.title.like(search_pattern))
             | (TeachingContent.content.like(search_pattern))
+            | (TeachingContent.tags.like(search_pattern))
         )
 
     total = query.count()
@@ -361,7 +306,7 @@ async def get_content(
     """获取内容详情"""
     content = (
         db.query(TeachingContent)
-        .options(joinedload(TeachingContent.category), joinedload(TeachingContent.author))
+        .options(joinedload(TeachingContent.author))
         .filter(TeachingContent.id == content_id)
         .first()
     )
@@ -375,7 +320,7 @@ async def get_content(
     db.commit()
     db.refresh(content)
 
-    return _serialize_teaching_content(content, current_user, include_category=True)
+    return _serialize_teaching_content(content, current_user)
 
 
 @router.post("/api/content/contents", response_model=TeachingContentResponse)
@@ -386,7 +331,9 @@ async def create_content(
     db: Session = Depends(get_db),
 ):
     """创建内容（教师/管理员）"""
-    db_content = TeachingContent(**content.model_dump(), author_id=current_user.id)
+    content_data = content.model_dump()
+    content_data["tags"] = _join_tags(content_data.get("tags"))
+    db_content = TeachingContent(**content_data, author_id=current_user.id)
     if content.is_published:
         db_content.published_at = datetime.datetime.utcnow()
 
@@ -395,7 +342,7 @@ async def create_content(
     db.refresh(db_content)
 
     background_tasks.add_task(sync_teaching_content_index, db_content.id)
-    return _serialize_teaching_content(db_content, current_user, include_category=True)
+    return _serialize_teaching_content(db_content, current_user)
 
 
 @router.put("/api/content/contents/{content_id}", response_model=TeachingContentResponse)
@@ -416,6 +363,8 @@ async def update_content(
 
     was_published = bool(db_content.is_published)
     update_data = content_update.model_dump(exclude_unset=True)
+    if "tags" in update_data:
+        update_data["tags"] = _join_tags(update_data.get("tags"))
     for key, value in update_data.items():
         setattr(db_content, key, value)
 
@@ -428,7 +377,7 @@ async def update_content(
     db.refresh(db_content)
 
     background_tasks.add_task(sync_teaching_content_index, db_content.id)
-    return _serialize_teaching_content(db_content, current_user, include_category=True)
+    return _serialize_teaching_content(db_content, current_user)
 
 
 @router.delete("/api/content/contents/{content_id}")
@@ -447,11 +396,44 @@ async def delete_content(
         raise HTTPException(status_code=403, detail="只能删除自己创建的内容")
 
     deleted_content_id = db_content.id
+    removed_files = 0
+    if _safe_remove_local_upload(db_content.file_path):
+        removed_files += 1
+    if _safe_remove_local_upload(db_content.cover_image):
+        removed_files += 1
     db.delete(db_content)
     db.commit()
 
     background_tasks.add_task(sync_teaching_content_index, deleted_content_id)
-    return {"message": "内容已删除"}
+    return {"message": "内容已删除", "removed_files": removed_files}
+
+
+@router.post("/api/content/upload")
+async def upload_content_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_content_editor),
+):
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_CONTENT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="不支持的文件类型")
+
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="上传文件为空")
+    if len(payload) > MAX_CONTENT_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="文件大小超出限制（最大 50MB）")
+
+    os.makedirs(CONTENT_UPLOAD_DIR, exist_ok=True)
+    filename = f"{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}{ext}"
+    save_path = os.path.join(CONTENT_UPLOAD_DIR, filename)
+    with open(save_path, "wb") as fw:
+        fw.write(payload)
+
+    return {
+        "url": f"/uploads/content/{filename}",
+        "filename": file.filename,
+        "size": len(payload),
+    }
 
 
 @router.post("/api/content/ai/polish", response_model=ContentAIPolishResponse)

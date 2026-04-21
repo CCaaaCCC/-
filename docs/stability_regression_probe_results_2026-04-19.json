@@ -1,0 +1,312 @@
+[
+  {
+    "name": "login_teacher",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZWFjaGVyIiwicm9sZSI6InRlYWNoZXIiLCJleHAiOjE3NzY1ODI4NTh9.R1X5WtTpQeppUSjqSxi5Ik-_quu-sXRitLpvnm-vRDk",
+      "token_type": "bearer",
+      "role": "teacher"
+    }
+  },
+  {
+    "name": "login_student",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdHVkZW50Iiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NzY1ODI4NTl9.j6Z4Pw4J_mIAUJSfIXvP7yN4lgsJSYMlD5bNGh9JOik",
+      "token_type": "bearer",
+      "role": "student"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_1",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_2",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_3",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_4",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_5",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_6",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_7",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_8",
+    "status": 401,
+    "expected": [
+      401
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "用户名或密码错误"
+    }
+  },
+  {
+    "name": "login_rate_limit_attempt_9",
+    "status": 429,
+    "expected": [
+      429
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "登录失败次数过多，请稍后再试"
+    }
+  },
+  {
+    "name": "content_page_zero_rejected",
+    "status": 400,
+    "expected": [
+      400
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "页码必须大于等于 1"
+    }
+  },
+  {
+    "name": "content_page_size_too_large_rejected",
+    "status": 400,
+    "expected": [
+      400
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "page_size 必须在 1 到 100 之间"
+    }
+  },
+  {
+    "name": "market_page_zero_rejected",
+    "status": 400,
+    "expected": [
+      400
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "页码必须大于等于 1"
+    }
+  },
+  {
+    "name": "market_page_size_too_large_rejected",
+    "status": 400,
+    "expected": [
+      400
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "page_size 必须在 1 到 100 之间"
+    }
+  },
+  {
+    "name": "assignments_page_zero_rejected",
+    "status": 400,
+    "expected": [
+      400
+    ],
+    "pass": true,
+    "payload": {
+      "detail": "页码必须大于等于 1"
+    }
+  },
+  {
+    "name": "assignments_legacy_list_shape",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": [
+      {
+        "title": "观察温度对植物生长的影响",
+        "description": "123",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-04-01T11:30:43",
+        "due_date": "2026-06-05T00:00:00",
+        "requirement": "123",
+        "template": null,
+        "is_published": true,
+        "id": 18,
+        "teacher_id": 1,
+        "teacher_name": "管理员",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "can_manage": false,
+        "can_grade": false,
+        "created_at": "2026-04-01T03:30:50",
+        "submission_count": 1
+      }
+    ]
+  },
+  {
+    "name": "assignments_legacy_is_list",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": [
+      {
+        "title": "观察温度对植物生长的影响",
+        "description": "123",
+        "device_id": 1,
+        "class_id": 4,
+        "start_date": "2026-04-01T11:30:43",
+        "due_date": "2026-06-05T00:00:00",
+        "requirement": "123",
+        "template": null,
+        "is_published": true,
+        "id": 18,
+        "teacher_id": 1,
+        "teacher_name": "管理员",
+        "device_name": "Default greenhouse",
+        "class_name": "一年级11班",
+        "can_manage": false,
+        "can_grade": false,
+        "created_at": "2026-04-01T03:30:50",
+        "submission_count": 1
+      }
+    ]
+  },
+  {
+    "name": "assignments_paginated_shape",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "items": [
+        {
+          "title": "观察温度对植物生长的影响",
+          "description": "123",
+          "device_id": 1,
+          "class_id": 4,
+          "start_date": "2026-04-01T11:30:43",
+          "due_date": "2026-06-05T00:00:00",
+          "requirement": "123",
+          "template": null,
+          "is_published": true,
+          "id": 18,
+          "teacher_id": 1,
+          "teacher_name": "管理员",
+          "device_name": "Default greenhouse",
+          "class_name": "一年级11班",
+          "can_manage": false,
+          "can_grade": false,
+          "created_at": "2026-04-01T03:30:50",
+          "submission_count": 1
+        }
+      ],
+      "total": 1,
+      "page": 1,
+      "page_size": 5
+    }
+  },
+  {
+    "name": "assignments_paginated_has_meta",
+    "status": 200,
+    "expected": [
+      200
+    ],
+    "pass": true,
+    "payload": {
+      "items": [
+        {
+          "title": "观察温度对植物生长的影响",
+          "description": "123",
+          "device_id": 1,
+          "class_id": 4,
+          "start_date": "2026-04-01T11:30:43",
+          "due_date": "2026-06-05T00:00:00",
+          "requirement": "123",
+          "template": null,
+          "is_published": true,
+          "id": 18,
+          "teacher_id": 1,
+          "teacher_name": "管理员",
+          "device_name": "Default greenhouse",
+          "class_name": "一年级11班",
+          "can_manage": false,
+          "can_grade": false,
+          "created_at": "2026-04-01T03:30:50",
+          "submission_count": 1
+        }
+      ],
+      "total": 1,
+      "page": 1,
+      "page_size": 5
+    }
+  }
+]

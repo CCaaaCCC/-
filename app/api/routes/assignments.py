@@ -14,6 +14,7 @@ from app.schemas.assignments import (
     AssignmentAIFeedbackRequest,
     AssignmentAIFeedbackResponse,
     AssignmentCreate,
+    AssignmentListResponse,
     AssignmentPublishRequest,
     AssignmentResponse,
     AssignmentSubmissionGrade,
@@ -30,6 +31,7 @@ router = APIRouter(tags=["assignments"])
 UPLOAD_ROOT = "uploads"
 REPORT_UPLOAD_DIR = os.path.join(UPLOAD_ROOT, "assignment_reports")
 MAX_ASSIGNMENT_REPORT_SIZE = 20 * 1024 * 1024
+MAX_ASSIGNMENT_PAGE_SIZE = 100
 
 
 def _build_submission_response(submission: AssignmentSubmission, student_name: str | None = None) -> AssignmentSubmissionResponse:
@@ -87,15 +89,29 @@ def _build_assignment_response(db: Session, assignment: Assignment, current_user
     )
 
 
-@router.get("/api/assignments", response_model=list[AssignmentResponse])
+@router.get("/api/assignments", response_model=AssignmentListResponse | list[AssignmentResponse])
 async def get_assignments(
     class_id: int | None = None,
     teacher_id: int | None = None,
     is_published: bool | None = None,
     status: str | None = None,
+    page: int | None = None,
+    page_size: int = 20,
+    with_pagination: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    paginate = with_pagination or page is not None
+    page_num = 1 if page is None else page
+    if paginate:
+        if page_num < 1:
+            raise HTTPException(status_code=400, detail="页码必须大于等于 1")
+        if page_size < 1 or page_size > MAX_ASSIGNMENT_PAGE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"page_size 必须在 1 到 {MAX_ASSIGNMENT_PAGE_SIZE} 之间",
+            )
+
     query = db.query(Assignment)
 
     if current_user.role == "student":
@@ -112,9 +128,23 @@ async def get_assignments(
     elif current_user.role == "student":
         query = query.filter(Assignment.is_published == True)
 
-    assignments = query.order_by(desc(Assignment.created_at)).all()
+    total = 0
+    requires_student_status_filter = bool(current_user.role == "student" and status and status != "all")
+
+    if paginate and not requires_student_status_filter:
+        total = query.count()
+        assignments = (
+            query.order_by(desc(Assignment.created_at))
+            .offset((page_num - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+    else:
+        assignments = query.order_by(desc(Assignment.created_at)).all()
 
     if not assignments:
+        if paginate:
+            return {"items": [], "total": total, "page": page_num, "page_size": page_size}
         return []
 
     if current_user.role == "student" and status and status != "all":
@@ -139,8 +169,20 @@ async def get_assignments(
             elif status == "graded" and sub_status == "graded":
                 filtered.append(item)
         assignments = filtered
+        if paginate:
+            total = len(assignments)
+            start_idx = (page_num - 1) * page_size
+            assignments = assignments[start_idx : start_idx + page_size]
+
+    if paginate and not requires_student_status_filter:
+        # total has been calculated from DB before page slicing.
+        pass
+    elif not paginate:
+        total = len(assignments)
 
     if not assignments:
+        if paginate:
+            return {"items": [], "total": total, "page": page_num, "page_size": page_size}
         return []
 
     assignment_ids = [a.id for a in assignments]
@@ -195,6 +237,9 @@ async def get_assignments(
                 submission_count=count_map.get(assignment.id, 0),
             )
         )
+
+    if paginate:
+        return {"items": result, "total": total, "page": page_num, "page_size": page_size}
 
     return result
 

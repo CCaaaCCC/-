@@ -40,6 +40,10 @@
             </el-button>
           </el-form-item>
         </el-form>
+        <div class="register-entry">
+          <span>还没有账号？</span>
+          <el-button link type="primary" @click="goRegister">学生/教师注册</el-button>
+        </div>
       </el-card>
     </div>
   </div>
@@ -51,7 +55,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { User, Lock } from '@element-plus/icons-vue';
 import { login } from '../api';
 import { ElMessage } from 'element-plus';
-import { getErrorMessage } from '../utils/error';
+import { getActionErrorMessage } from '../utils/error';
 
 const router = useRouter();
 const route = useRoute();
@@ -87,18 +91,21 @@ const handleLogin = async () => {
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/';
     router.push(redirect);
   } catch (error: any) {
-    const status = error?.response?.status;
-    if (status === 401) {
-      ElMessage.error('用户名或密码错误，请重新输入');
-    } else if (status >= 500) {
-      ElMessage.error('服务暂时不可用，请稍后重试');
-    } else {
-      ElMessage.error(getErrorMessage(error, '登录失败，请检查网络或后端服务状态'));
-    }
+    ElMessage.error(getActionErrorMessage(error, {
+      action: '登录',
+      fallback: '登录失败，请检查网络或后端服务状态',
+      unauthorizedMessage: '用户名或密码错误，请重新输入',
+      serverErrorMessage: '登录服务暂不可用，请稍后重试',
+      networkErrorMessage: '无法连接登录服务，请确认后端已启动',
+    }));
     console.error(error);
   } finally {
     loading.value = false;
   }
+};
+
+const goRegister = () => {
+  router.push('/register');
 };
 
 onMounted(() => {
@@ -215,6 +222,16 @@ onMounted(() => {
 
 .login-btn:not(:disabled):hover {
   transform: translateY(-1px);
+}
+
+.register-entry {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 13px;
 }
 
 @media (max-width: 900px) {

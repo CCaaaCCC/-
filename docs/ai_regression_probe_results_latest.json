@@ -1,0 +1,79 @@
+{
+  "generated_at": "2026-04-19T09:47:02.883817Z",
+  "base_url": "http://127.0.0.1:8000",
+  "username": "student",
+  "device_id": 1,
+  "strict_markdown": false,
+  "strict_citations": false,
+  "cases": [
+    {
+      "name": "markdown_contract",
+      "status": "pass",
+      "message": "AI markdown contract returned Markdown markers",
+      "details": {
+        "source": "deepseek-langchain",
+        "features": [
+          "heading",
+          "unordered_list",
+          "table"
+        ],
+        "answer_preview": "## Greenhouse Data Observation Guide\n\n- **Monitor trends over time** to identify patterns, not just single readings.\n- **Cross-reference environmental factors** like temperature and humidity, as they often influence each"
+      }
+    },
+    {
+      "name": "web_citation_alignment",
+      "status": "pass",
+      "message": "Citations are contiguous and aligned with [n] references",
+      "details": {
+        "source": "deepseek-langchain",
+        "web_search_used": true,
+        "web_search_notice": "已启用智能搜索，仅展示回答中引用的高相关来源。",
+        "indexes": [
+          1,
+          2
+        ],
+        "expected_indexes": [
+          1,
+          2
+        ],
+        "citation_count": 2,
+        "all_urls_present": true,
+        "is_contiguous": true,
+        "has_indexes": true
+      }
+    },
+    {
+      "name": "conversation_reload_alignment",
+      "status": "pass",
+      "message": "Conversation reload kept [n] references aligned with persisted citations",
+      "details": {
+        "conversation_id": 29,
+        "done_seen": true,
+        "stream_error_count": 0,
+        "stream_text_chars": 857,
+        "persisted_answer_chars": 857,
+        "persisted_source": "deepseek-langchain",
+        "persisted_web_notice": "已启用智能搜索，仅展示回答中引用的高相关来源。",
+        "indexes": [
+          1,
+          2,
+          3
+        ],
+        "expected_indexes": [
+          1,
+          2,
+          3
+        ],
+        "citation_count": 3,
+        "all_urls_present": true,
+        "is_contiguous": true,
+        "has_indexes": true
+      }
+    }
+  ],
+  "summary": {
+    "pass": 3,
+    "warn": 0,
+    "fail": 0
+  }
+}

@@ -14,6 +14,7 @@ export {
 
 export type {
   Assignment,
+  AssignmentListResponse,
   AssignmentAIFeedback,
   AssignmentSubmission,
 } from './index';

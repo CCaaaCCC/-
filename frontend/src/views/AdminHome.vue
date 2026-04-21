@@ -71,6 +71,17 @@ const modules = [
     primaryType: 'success',
     secondaryLabel: '数据大屏',
     secondaryRoute: '/display'
+  },
+  {
+    title: '线下商城',
+    tag: '交易',
+    tagType: 'warning',
+    description: '查看学生发布的线下售卖信息，辅助进行校园农产品展示与秩序管理。',
+    primaryLabel: '进入线下商城',
+    primaryRoute: '/market',
+    primaryType: 'warning',
+    secondaryLabel: '教学资源',
+    secondaryRoute: '/teaching'
   }
 ] as const;
 </script>

@@ -104,6 +104,15 @@
               <el-tag size="small" style="margin-left: auto">{{ cls.student_count }}</el-tag>
             </el-menu-item>
           </el-menu>
+
+          <div v-if="activeClassInfo && activeClassInfo.invite_code" class="invite-panel">
+            <div class="invite-title">当前班级邀请码</div>
+            <div class="invite-code">{{ activeClassInfo.invite_code }}</div>
+            <div class="invite-actions">
+              <el-button size="small" @click="copyInviteCode(activeClassInfo.invite_code)">复制邀请码</el-button>
+              <el-button size="small" type="warning" plain @click="regenerateInviteCode">刷新邀请码</el-button>
+            </div>
+          </div>
         </el-card>
       </div>
 
@@ -195,14 +204,28 @@
               </template>
             </el-table-column>
             <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
-            <el-table-column label="操作" width="320" fixed="right" align="center">
+            <el-table-column label="操作" width="160" fixed="right" align="center">
               <template #default="{ row }">
-                <el-button size="small" @click="editUser(row)">编辑</el-button>
-                <el-button size="small" type="warning" @click="showResetPassword(row)">重置密码</el-button>
-                <el-button size="small" :type="row.is_active ? 'warning' : 'success'" @click="toggleActive(row)">
-                  {{ row.is_active ? '禁用' : '启用' }}
-                </el-button>
-                <el-button size="small" type="danger" @click="confirmDelete(row.id)">删除</el-button>
+                <el-button link type="primary" @click="editUser(row)">编辑</el-button>
+                <el-dropdown trigger="click" @command="(cmd: string) => handleCommand(cmd, row)">
+                  <el-button link type="primary" style="margin-left: 8px">
+                    更多 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="resetPwd">
+                        <el-icon><Key /></el-icon>重置密码
+                      </el-dropdown-item>
+                      <el-dropdown-item command="toggleActive">
+                        <el-icon><component :is="row.is_active ? Close : Check" /></el-icon>
+                        {{ row.is_active ? '禁用账号' : '启用账号' }}
+                      </el-dropdown-item>
+                      <el-dropdown-item command="delete" divided style="color: var(--el-color-danger)">
+                        <el-icon><Delete /></el-icon>删除用户
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
               </template>
             </el-table-column>
           </el-table>
@@ -432,7 +455,8 @@
 import { ref, onMounted, computed, reactive, watch } from 'vue';
 import {
   Search, UploadFilled, Download, Upload, Plus, Delete, Key,
-  DataLine, Filter, School, Grid, User as UserIcon, InfoFilled
+  DataLine, Filter, School, Grid, User as UserIcon, InfoFilled,
+  ArrowDown, Close, Check
 } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
@@ -449,6 +473,7 @@ import {
   exportUsers as exportUsersApi,
   getClasses,
   createClass,
+  refreshClassInviteCode,
   batchDeleteUsers,
   batchUpdateClass,
   batchResetPassword,
@@ -512,6 +537,7 @@ const selectedUserIds = ref<number[]>([]);
 
 // 班级列表
 const classes = ref<any[]>([]);
+const activeClassInfo = computed(() => classes.value.find((item: any) => item.id === activeClassId.value));
 const showClassDialog = ref(false);
 const classForm = ref({
   class_name: '',
@@ -656,6 +682,37 @@ const handleClassSelect = (index: string) => {
   activeClassId.value = parseInt(index);
   filterForm.value.class_id = index === '0' ? undefined : parseInt(index);
   applyQuery();
+};
+
+const copyInviteCode = async (code?: string | null) => {
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    ElMessage.success('邀请码已复制');
+  } catch {
+    ElMessage.warning('复制失败，请手动复制');
+  }
+};
+
+const regenerateInviteCode = async () => {
+  if (!activeClassInfo.value) {
+    ElMessage.warning('请先选择班级');
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm('刷新后旧邀请码将失效，是否继续？', '确认刷新', { type: 'warning' });
+    const updated = await refreshClassInviteCode(activeClassInfo.value.id);
+    const target = classes.value.find((item: any) => item.id === updated.id);
+    if (target) {
+      target.invite_code = updated.invite_code;
+    }
+    ElMessage.success('邀请码已刷新');
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      ElMessage.error(getErrorMessage(error, '刷新失败'));
+    }
+  }
 };
 
 // 角色标签
@@ -808,6 +865,12 @@ const showResetPassword = (user: User) => {
   resetUser.value = user;
   resetForm.value.newPassword = '';
   showResetDialog.value = true;
+};
+
+const handleCommand = (cmd: string, row: User) => {
+  if (cmd === 'resetPwd') showResetPassword(row);
+  else if (cmd === 'toggleActive') toggleActive(row);
+  else if (cmd === 'delete') confirmDelete(row.id);
 };
 
 const submitResetPassword = async () => {
@@ -1032,6 +1095,33 @@ watch(
   padding: 8px 0;
 }
 
+.invite-panel {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--el-fill-color-light) 72%, transparent);
+}
+
+.invite-title {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.invite-code {
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--el-color-primary);
+}
+
+.invite-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
 .stat-item {
   text-align: center;
   padding: 12px 8px;
@@ -1175,6 +1265,19 @@ watch(
 
   .toolbar-actions .el-button {
     flex: 1 1 calc(50% - 6px);
+  }
+  
+  .pagination-container {
+    text-align: center !important;
+  }
+}
+
+/* 更小屏幕的适配 */
+@media (max-width: 600px) {
+  .pagination-container :deep(.el-pagination) {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
   }
 }
 </style>

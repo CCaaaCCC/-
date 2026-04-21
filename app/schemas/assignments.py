@@ -46,6 +46,13 @@ class AssignmentResponse(AssignmentBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AssignmentListResponse(BaseModel):
+    items: list[AssignmentResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 class AssignmentSubmissionBase(BaseModel):
     experiment_date: datetime.date | None = None
     observations: str | None = None

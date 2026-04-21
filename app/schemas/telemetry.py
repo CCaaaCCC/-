@@ -25,7 +25,9 @@ class DeviceResponse(BaseModel):
     last_seen: Optional[datetime.datetime]
     pump_state: int
     fan_state: int
+    fan_speed: int = Field(100, ge=0, le=100)
     light_state: int
+    light_brightness: int = Field(100, ge=0, le=100)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -34,13 +36,17 @@ class DeviceCreateRequest(BaseModel):
     status: Optional[int] = 1
     pump_state: Optional[int] = 0
     fan_state: Optional[int] = 0
+    fan_speed: Optional[int] = Field(100, ge=0, le=100)
     light_state: Optional[int] = 0
+    light_brightness: Optional[int] = Field(100, ge=0, le=100)
 
 
 class ControlRequest(BaseModel):
     pump_state: Optional[int] = None
     fan_state: Optional[int] = None
+    fan_speed: Optional[int] = Field(None, ge=0, le=100)
     light_state: Optional[int] = None
+    light_brightness: Optional[int] = Field(None, ge=0, le=100)
 
 
 class AIConversationMessage(BaseModel):
@@ -126,10 +132,6 @@ class AIConversationAskRequest(BaseModel):
 
 class AIConversationPinRequest(BaseModel):
     is_pinned: bool
-
-
-class DemoScenarioRequest(BaseModel):
-    scenario: Literal['drought', 'heatwave', 'low_light', 'healthy']
 
 
 class ExportRequest(BaseModel):

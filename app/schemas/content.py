@@ -3,30 +3,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ContentCategoryBase(BaseModel):
-    name: str
-    description: str | None = None
-    parent_id: int | None = None
-    sort_order: int = 0
-
-
-class ContentCategoryCreate(ContentCategoryBase):
-    pass
-
-
-class ContentCategoryResponse(ContentCategoryBase):
-    id: int
-    created_at: datetime.datetime
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ContentCategoryWithChildren(ContentCategoryResponse):
-    children: list[ContentCategoryResponse] = Field(default_factory=list)
-
-
 class TeachingContentBase(BaseModel):
     title: str
-    category_id: int
+    tags: list[str] = Field(default_factory=list)
     content_type: str = "article"
     content: str | None = None
     video_url: str | None = None
@@ -40,7 +19,7 @@ class TeachingContentCreate(TeachingContentBase):
 
 class TeachingContentUpdate(BaseModel):
     title: str | None = None
-    category_id: int | None = None
+    tags: list[str] | None = None
     content_type: str | None = None
     content: str | None = None
     video_url: str | None = None
@@ -63,7 +42,6 @@ class TeachingContentResponse(TeachingContentBase):
     can_edit: bool = False
     can_delete: bool = False
     can_publish: bool = False
-    category: ContentCategoryResponse | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

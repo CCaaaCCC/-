@@ -120,7 +120,6 @@ def run_authenticated_suite(
 ) -> None:
     common_cases: list[tuple[str, str, dict[str, Any] | None, int | list[int]]] = [
         ('profile_me', '/api/profile/me', None, 200),
-        ('content_categories', '/api/content/categories', None, 200),
         ('content_list', '/api/content/contents', {'page': 1, 'page_size': 20}, 200),
         ('assignments_list', '/api/assignments', {'status': 'all'}, 200),
     ]

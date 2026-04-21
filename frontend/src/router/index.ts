@@ -21,6 +21,11 @@ const routes = [
     component: () => import('../views/Login.vue')
   },
   {
+    path: '/register',
+    name: 'Register',
+    component: () => import('../views/Register.vue')
+  },
+  {
     path: '/',
     name: 'HomeRedirect',
     redirect: () => {
@@ -59,6 +64,12 @@ const routes = [
     path: '/teaching',
     name: 'TeachingContents',
     component: () => import('../views/TeachingContents.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/market',
+    name: 'Market',
+    component: () => import('../views/Market.vue'),
     meta: { requiresAuth: true }
   },
   {

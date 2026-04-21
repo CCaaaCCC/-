@@ -57,7 +57,9 @@ class Device(Base):
     last_seen = Column(DateTime, nullable=True)
     pump_state = Column(SmallInteger, default=0)
     fan_state = Column(SmallInteger, default=0)
+    fan_speed = Column(SmallInteger, default=100)
     light_state = Column(SmallInteger, default=0)
+    light_brightness = Column(SmallInteger, default=100)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
@@ -81,22 +83,6 @@ class SensorReading(Base):
 
 
 # --- 教学内容管理模型 ---
-class ContentCategory(Base):
-    """教学内容分类表"""
-
-    __tablename__ = "content_categories"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    parent_id = Column(Integer, ForeignKey("content_categories.id"), nullable=True)
-    description = Column(String(500), nullable=True)
-    sort_order = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-    parent = relationship("ContentCategory", remote_side=[id], backref="children")
-    contents = relationship("TeachingContent", back_populates="category")
-
-
 class TeachingContent(Base):
     """教学内容表"""
 
@@ -104,8 +90,8 @@ class TeachingContent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(200), nullable=False, index=True)
-    category_id = Column(Integer, ForeignKey("content_categories.id"), nullable=False, index=True)
-    content_type = Column(String(20), default="article")  # article, video, image, pdf
+    tags = Column(String(500), nullable=True, index=True)
+    content_type = Column(String(20), default="article")  # article, video, image, document, pdf
     content = Column(Text, nullable=True)
     video_url = Column(String(500), nullable=True)
     file_path = Column(String(500), nullable=True)
@@ -117,7 +103,6 @@ class TeachingContent(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
-    category = relationship("ContentCategory", back_populates="contents")
     author = relationship("User")
     learning_records = relationship("StudentLearningRecord", back_populates="content")
     comments = relationship("ContentComment", back_populates="content")
@@ -217,6 +202,7 @@ class Class(Base):
     id = Column(Integer, primary_key=True, index=True)
     class_name = Column(String(100), nullable=False, index=True)
     grade = Column(String(20), nullable=True)
+    invite_code = Column(String(32), nullable=False, unique=True, index=True)
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     description = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)
@@ -262,6 +248,31 @@ class UserOperationLog(Base):
 
     operator = relationship("User", foreign_keys=[operator_id])
     target_user = relationship("User", foreign_keys=[target_user_id])
+
+
+class MarketProduct(Base):
+    """线下交易商品信息表"""
+
+    __tablename__ = "market_products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    price = Column(DECIMAL(10, 2), nullable=True)
+    location = Column(String(255), nullable=False)
+    contact_info = Column(String(255), nullable=False)
+    image_url = Column(String(500), nullable=True)
+    seller_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(20), default="on_sale", index=True)  # on_sale, sold, off_shelf
+    view_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    seller = relationship("User")
+
+    __table_args__ = (
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
+    )
 
 
 # ==================== 实验报告系统模型 ====================

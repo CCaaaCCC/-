@@ -16,7 +16,7 @@
     </div>
 
     <!-- 主内容区 -->
-    <div class="main-container" v-loading="loading">
+    <div class="main-container">
       <!-- 筛选区 -->
       <el-card class="filter-card" shadow="hover">
         <el-form :model="filterForm" inline>
@@ -88,46 +88,63 @@
 
       <!-- 日志表格 -->
       <el-card class="table-card" shadow="hover" style="margin-top: 20px">
-        <el-table :data="logs" style="width: 100%" border>
-          <el-table-column prop="id" label="ID" width="80" />
-          <el-table-column label="操作类型" width="140">
-            <template #default="{ row }">
-              <el-tag :type="getOperationTypeTag(row.operation_type)">
-                {{ getOperationTypeName(row.operation_type) }}
-              </el-tag>
+        <template v-if="loading">
+          <el-skeleton animated>
+            <template #template>
+              <div class="log-skeleton-row" v-for="idx in 8" :key="`log-skeleton-${idx}`">
+                <el-skeleton-item variant="text" style="width: 7%" />
+                <el-skeleton-item variant="text" style="width: 13%" />
+                <el-skeleton-item variant="text" style="width: 12%" />
+                <el-skeleton-item variant="text" style="width: 12%" />
+                <el-skeleton-item variant="text" style="width: 30%" />
+                <el-skeleton-item variant="text" style="width: 18%" />
+              </div>
             </template>
-          </el-table-column>
-          <el-table-column label="操作员" width="150">
-            <template #default="{ row }">
-              <span>{{ row.operator_name || `ID:${row.operator_id}` }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="目标用户" width="150">
-            <template #default="{ row }">
-              <span v-if="row.target_user_id">{{ row.target_user_name || `ID:${row.target_user_id}` }}</span>
-              <span v-else>-</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="details" label="详情" min-width="200" show-overflow-tooltip />
-          <el-table-column label="操作时间" width="180">
-            <template #default="{ row }">
-              {{ formatDateTime(row.created_at) }}
-            </template>
-          </el-table-column>
-        </el-table>
+          </el-skeleton>
+        </template>
 
-        <!-- 分页 -->
-        <div class="pagination-container" style="margin-top: 20px; text-align: right">
-          <el-pagination
-            v-model:current-page="pagination.page"
-            v-model:page-size="pagination.page_size"
-            :page-sizes="[20, 50, 100, 200]"
-            layout="total, sizes, prev, pager, next, jumper"
-            :total="total"
-            @size-change="loadLogs"
-            @current-change="loadLogs"
-          />
-        </div>
+        <template v-else>
+          <el-table :data="logs" style="width: 100%" border>
+            <el-table-column prop="id" label="ID" width="80" />
+            <el-table-column label="操作类型" width="140">
+              <template #default="{ row }">
+                <el-tag :type="getOperationTypeTag(row.operation_type)">
+                  {{ getOperationTypeName(row.operation_type) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作员" width="150">
+              <template #default="{ row }">
+                <span>{{ row.operator_name || `ID:${row.operator_id}` }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="目标用户" width="150">
+              <template #default="{ row }">
+                <span v-if="row.target_user_id">{{ row.target_user_name || `ID:${row.target_user_id}` }}</span>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="details" label="详情" min-width="200" show-overflow-tooltip />
+            <el-table-column label="操作时间" width="180">
+              <template #default="{ row }">
+                {{ formatDateTime(row.created_at) }}
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <!-- 分页 -->
+          <div class="pagination-container" style="margin-top: 20px; text-align: right">
+            <el-pagination
+              v-model:current-page="pagination.page"
+              v-model:page-size="pagination.page_size"
+              :page-sizes="[20, 50, 100, 200]"
+              layout="total, sizes, prev, pager, next, jumper"
+              :total="total"
+              @size-change="handlePageSizeChange"
+              @current-change="handlePageChange"
+            />
+          </div>
+        </template>
       </el-card>
     </div>
   </div>
@@ -141,6 +158,7 @@ import { Download } from 'lucide-vue-next';
 import { exportOperationLogs, getOperationLogs, getUsers } from '../api';
 import { getErrorMessage } from '../utils/error';
 import { clearAuthSession } from '../utils/authSession';
+import { usePagination } from '../composables/usePagination';
 
 const router = useRouter();
 
@@ -149,19 +167,14 @@ const loading = ref(false);
 const exporting = ref(false);
 const logs = ref<any[]>([]);
 const operators = ref<any[]>([]);
-const total = ref(0);
+const { pagination, resetPage, setTotal, changePageSize } = usePagination(1, 20);
+const total = computed(() => pagination.total);
 
 // 筛选
 const filterForm = ref({
   operation_type: null as string | null,
   operator_id: null as number | null,
   date_range: null as [Date, Date] | null
-});
-
-// 分页
-const pagination = ref({
-  page: 1,
-  page_size: 20
 });
 
 // 计算属性
@@ -187,8 +200,8 @@ const loadLogs = async () => {
   loading.value = true;
   try {
     const params: any = {
-      page: pagination.value.page,
-      page_size: pagination.value.page_size
+      page: pagination.page,
+      page_size: pagination.page_size
     };
 
     if (filterForm.value.operation_type) {
@@ -207,7 +220,7 @@ const loadLogs = async () => {
       throw new Error('日志接口返回结构异常');
     }
     logs.value = data.items;
-    total.value = data.total;
+    setTotal(data.total);
   } catch (error: any) {
     ElMessage.error('加载日志失败：' + getErrorMessage(error, '请稍后重试'));
   } finally {
@@ -232,7 +245,17 @@ const resetFilter = () => {
     operator_id: null,
     date_range: null
   };
-  pagination.value.page = 1;
+  resetPage();
+  loadLogs();
+};
+
+const handlePageSizeChange = (size: number) => {
+  changePageSize(size);
+  loadLogs();
+};
+
+const handlePageChange = (page: number) => {
+  pagination.page = page;
   loadLogs();
 };
 
@@ -395,6 +418,13 @@ onMounted(() => {
 .table-card {
   background: var(--glass-bg-strong);
   border: 1px solid var(--el-border-color-light);
+}
+
+.log-skeleton-row {
+  display: grid;
+  grid-template-columns: 0.7fr 1.2fr 1.1fr 1.1fr 2.5fr 1.6fr;
+  gap: 12px;
+  padding: 10px 0;
 }
 
 .pagination-container {

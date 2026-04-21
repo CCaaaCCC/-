@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -5,6 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape
 from typing import Any, AsyncIterator, Optional
 
 from app.core.config import settings
@@ -13,6 +15,7 @@ from app.services.langchain_service import (
     ask_science_with_langchain,
     generate_short_title,
     generate_assignment_feedback_with_langchain,
+    has_greenhouse_intent,
     polish_teaching_content_with_langchain,
     stream_science_with_langchain,
 )
@@ -23,7 +26,10 @@ SOURCE_RULE_BASED = "rule-based"
 SOURCE_WEATHER_API = "weather-api"
 MAX_WEB_SOURCES = 5
 WEB_SEARCH_TIMEOUT_SECONDS = 8
+WEB_PAGE_FETCH_TIMEOUT_SECONDS = 6
 WEATHER_API_TIMEOUT_SECONDS = 6
+WEB_PAGE_MAX_CHARS = 1200
+WEB_PAGE_FETCH_LIMIT = 3
 WEB_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
@@ -166,18 +172,16 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_provider_source() -> str:
-    model = (settings.qwen_model or "").lower()
-    base_url = (settings.qwen_base_url or "").lower()
+    model = (settings.deepseek_model or "").lower()
+    base_url = (settings.deepseek_base_url or "").lower()
     if "deepseek" in model or "deepseek" in base_url:
         return "deepseek"
-    if "qwen" in model or "dashscope" in base_url:
-        return "qwen"
     return "llm"
 
 
-SOURCE_QWEN = _resolve_provider_source()
-SOURCE_LANGCHAIN = f"{SOURCE_QWEN}-langchain"
-SOURCE_LANGCHAIN_RAG = f"{SOURCE_QWEN}-langchain-rag"
+SOURCE_PROVIDER = _resolve_provider_source()
+SOURCE_LANGCHAIN = f"{SOURCE_PROVIDER}-langchain"
+SOURCE_LANGCHAIN_RAG = f"{SOURCE_PROVIDER}-langchain-rag"
 
 
 def _langchain_source(has_knowledge_context: bool) -> str:
@@ -220,20 +224,26 @@ def _science_role_label(user_role: str) -> str:
     return "学生"
 
 
-def _science_system_prompt_qwen(user_role: str) -> str:
+def _xml_block(tag: str, content: str) -> str:
+    safe = escape((content or "").strip())
+    return f"<{tag}>\n{safe}\n</{tag}>"
+
+
+def _science_system_prompt_deepseek(user_role: str) -> str:
     return (
-        "你是一个人工智能助手。请用自然、易懂的语言客观回答问题，并优先使用 Markdown 组织内容（标题、列表、表格、代码块）。"
-        "注意：仅当用户的提问涉及大棚、植物环境、传感器数据时，才结合提供的大棚数据给出分析。"
-        "如果用户提问与此无关，请直接忽略该数据并回答问题。"
-        "当系统提供联网参考且你使用了其中信息时，请在相关句子后添加来源编号（如 [1]、[2]），编号必须来自提供的参考列表，不要编造。"
-        "若本次未拿到实时联网来源，请不要回答“我无法联网”；请改为“暂未获取到实时来源”，并给出可执行的替代建议。"
+        f"你是教育平台的科学助教，当前服务对象角色：{_science_role_label(user_role)}。"
+        "你已接入结构化上下文，包括知识库、对话历史、联网来源和可选的大棚传感器数据。"
+        "请优先给出直接、可执行、自然的回答，并在合适时使用 Markdown 结构化表达。"
+        "仅当问题与大棚/作物环境明确相关时，才使用传感器数据；否则忽略该数据。"
+        "当你使用了联网来源时，请在对应句子后标注来源编号（如 [1]），且编号必须来自给定来源。"
+        "如果当前来源不足，请明确说明“当前来源暂不可用”，并继续给出可执行替代建议。"
     )
 
 
 def _resolve_science_model(enable_deep_thinking: bool) -> str:
     if enable_deep_thinking:
-        return settings.ai_reasoner_model or settings.qwen_model or "deepseek-reasoner"
-    return settings.ai_chat_model or settings.qwen_model or "deepseek-chat"
+        return settings.ai_reasoner_model or settings.deepseek_model or "deepseek-reasoner"
+    return settings.ai_chat_model or settings.deepseek_model or "deepseek-chat"
 
 
 def _extract_target_length_from_question(question: str) -> int | None:
@@ -296,7 +306,7 @@ def _sanitize_generated_title(raw: str | None) -> str:
 
 
 async def generate_conversation_title(question: str) -> str:
-    model_title = await generate_short_title(question, model_name=settings.ai_chat_model or settings.qwen_model)
+    model_title = await generate_short_title(question, model_name=settings.ai_chat_model or settings.deepseek_model)
     normalized = _sanitize_generated_title(model_title)
     if normalized:
         return normalized
@@ -307,6 +317,67 @@ def _clean_html_text(raw_text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", raw_text or "")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _extract_text_from_html_document(html_text: str) -> str:
+    if not html_text:
+        return ""
+
+    normalized = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html_text)
+    normalized = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", normalized)
+    normalized = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", normalized)
+    normalized = re.sub(r"(?is)<!--.*?-->", " ", normalized)
+    return _clean_html_text(normalized)
+
+
+def _fetch_webpage_excerpt(url: str, timeout: int = WEB_PAGE_FETCH_TIMEOUT_SECONDS, max_chars: int = WEB_PAGE_MAX_CHARS) -> str:
+    request = urllib.request.Request(
+        url=url,
+        headers={
+            "User-Agent": WEB_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = response.read().decode("utf-8", errors="replace")
+
+    content = _extract_text_from_html_document(payload)
+    if len(content) < 120:
+        return ""
+    return content[:max_chars]
+
+
+def _enrich_sources_with_page_excerpt(sources: list[dict[str, str]]) -> list[dict[str, str]]:
+    if not sources:
+        return []
+
+    enriched: list[dict[str, str]] = []
+    for index, item in enumerate(sources):
+        current = {
+            "title": str(item.get("title") or "").strip(),
+            "url": str(item.get("url") or "").strip(),
+            "snippet": str(item.get("snippet") or "").strip(),
+        }
+        if not current["url"]:
+            continue
+
+        should_fetch = index < WEB_PAGE_FETCH_LIMIT
+        if should_fetch:
+            try:
+                deep_excerpt = _fetch_webpage_excerpt(current["url"])
+                if deep_excerpt:
+                    if current["snippet"]:
+                        merged = f"{current['snippet']}\n\n正文摘录：{deep_excerpt}"
+                        current["snippet"] = merged[:WEB_PAGE_MAX_CHARS]
+                    else:
+                        current["snippet"] = deep_excerpt
+            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
+                logger.debug("skip deep fetch for %s: %s", current["url"], exc)
+
+        enriched.append(current)
+
+    return enriched
 
 
 def _normalize_search_text(text: str) -> str:
@@ -600,33 +671,8 @@ def _try_build_weather_answer(question: str) -> tuple[str, list[dict[str, str]],
         return None
 
 
-def _build_weather_fallback_answer(question: str) -> str:
-    location = _extract_weather_location(question) or "该城市"
-    return (
-        f"我已尝试实时检索 {location} 的天气，但暂未拿到可用的实时来源。"
-        "你可以稍后重试，或把城市名改成“中文名 + weather”再查一次。\n\n"
-        "在等待实时数据时，可先参考通用建议：白天体感偏热时及时补水，"
-        "早晚温差较大时注意增减衣物。"
-    )
-
-
-def _soften_offline_claim_for_weather(
-    answer: str,
-    question: str,
-    citations: list[dict[str, str]],
-    web_search_notice: str | None,
-) -> tuple[str, list[dict[str, str]], str | None]:
-    if not answer or not _is_weather_query(question):
-        return answer, citations, web_search_notice
-
-    if not OFFLINE_CLAIM_PATTERN.search(answer):
-        return answer, citations, web_search_notice
-
-    return (
-        _build_weather_fallback_answer(question),
-        [],
-        "暂未获取到实时来源，已自动提供通用回答。",
-    )
+def _contains_offline_claim(answer: str) -> bool:
+    return bool(answer and OFFLINE_CLAIM_PATTERN.search(answer))
 
 
 def _char_ngrams(text: str) -> set[str]:
@@ -824,7 +870,8 @@ def _search_web_sources(question: str, max_results: int = MAX_WEB_SOURCES) -> tu
             selected = [item for _, _, _, item in scored[:max_results]]
 
         if selected:
-            return selected, "已启用智能搜索，已按相关性与来源可信度筛选结果。"
+            enriched_sources = _enrich_sources_with_page_excerpt(selected)
+            return enriched_sources, "已启用智能搜索，已按相关性、可信度与正文深度筛选结果。"
         return [], "暂未检索到高相关来源，已自动提供通用回答。"
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ET.ParseError, ValueError) as exc:
         logger.warning("web search unavailable: %s", exc)
@@ -839,7 +886,7 @@ def _build_web_context(sources: list[dict[str, str]]) -> str:
     for idx, item in enumerate(sources, start=1):
         title = str(item.get("title") or "来源")
         url = str(item.get("url") or "")
-        snippet = str(item.get("snippet") or "暂无摘要")
+        snippet = str(item.get("snippet") or "暂无摘要")[:680]
         if not url:
             continue
         rows.append(f"[{idx}] {title}\n链接：{url}\n摘要：{snippet}")
@@ -955,7 +1002,7 @@ async def _ask_science_assistant_with_context(
     if langchain_answer:
         return langchain_answer, _langchain_source(has_knowledge_context)
 
-    legacy_answer, legacy_source = ask_qwen_science_assistant(
+    legacy_answer, legacy_source = ask_deepseek_science_assistant(
         question,
         latest,
         conversation_history=conversation_history,
@@ -967,35 +1014,55 @@ async def _ask_science_assistant_with_context(
     return legacy_answer, legacy_source
 
 
-def build_rule_based_science_answer(
+async def _retry_if_offline_claim(
+    *,
+    answer: str,
     question: str,
     latest: Optional[SensorReading],
-    user_role: str = "student",
-) -> str:
-    if not latest:
-        return "目前还没有实时数据。你可以先采集一次传感器数据，再来问我，我会给你基于数据的科学解释。"
+    knowledge_context: str,
+    has_knowledge_context: bool,
+    conversation_history: Optional[list[dict[str, str]]],
+    user_role: str,
+    model_name: str,
+    web_context: str | None,
+    max_tokens_override: int | None,
+) -> tuple[str, bool]:
+    if not _contains_offline_claim(answer):
+        return answer, False
 
-    hints = []
-    if latest.temp is not None:
-        if latest.temp > 33:
-            hints.append("温度偏高，植物蒸腾会加快，可能更容易缺水")
-        elif latest.temp < 12:
-            hints.append("温度偏低，植物代谢会变慢，生长速度可能下降")
-    if latest.soil_moisture is not None:
-        if latest.soil_moisture < 20:
-            hints.append("土壤湿度偏低，建议观察叶片是否卷曲并及时补水")
-        elif latest.soil_moisture > 80:
-            hints.append("土壤湿度偏高，可能影响根系透气，注意通风")
-    if latest.light is not None and latest.light < 3000:
-        hints.append("光照较弱，植物光合作用效率可能不足")
+    retry_times = max(1, min(int(settings.ai_retry_count or 1), 2))
+    backoff_seconds = max(0, int(settings.ai_retry_backoff_ms or 0)) / 1000.0
+    latest_answer = answer
 
-    if not hints:
-        hints.append("目前环境参数整体较平稳，可以继续观察并记录变化趋势")
+    for index in range(retry_times):
+        retry_question = (
+            f"{question}\n\n"
+            "补充要求：直接根据已提供上下文输出结论、依据和不确定项；"
+            "不要描述你的联网能力、系统限制或模型身份。"
+        )
+        candidate, _ = await _ask_science_assistant_with_context(
+            retry_question,
+            latest,
+            knowledge_context=knowledge_context,
+            has_knowledge_context=has_knowledge_context,
+            conversation_history=conversation_history,
+            user_role=user_role,
+            model_name=model_name,
+            web_context=web_context,
+            max_tokens_override=max_tokens_override,
+        )
+        if candidate:
+            latest_answer = candidate
+        if not _contains_offline_claim(latest_answer):
+            return latest_answer, True
 
-    return f"你的问题是：{question}。结合当前传感器数据，我的建议是：" + "；".join(hints) + "。"
+        if backoff_seconds > 0 and index < retry_times - 1:
+            await asyncio.sleep(backoff_seconds)
+
+    return latest_answer, True
 
 
-def ask_qwen_science_assistant(
+def ask_deepseek_science_assistant(
     question: str,
     latest: Optional[SensorReading],
     conversation_history: Optional[list[dict[str, str]]] = None,
@@ -1004,13 +1071,14 @@ def ask_qwen_science_assistant(
     web_context: str | None = None,
     max_tokens: int | None = None,
 ) -> tuple[str, str]:
-    api_key = settings.qwen_api_key
-    selected_model = model_name or settings.qwen_model
+    api_key = settings.deepseek_api_key
+    selected_model = model_name or settings.deepseek_model
     if not api_key:
-        return build_rule_based_science_answer(question, latest, user_role=user_role), SOURCE_RULE_BASED
+        raise RuntimeError("DEEPSEEK_API_KEY is not configured")
 
-    telemetry_text = "暂无实时数据"
-    if latest:
+    telemetry_text = ""
+    telemetry_enabled = bool(latest and has_greenhouse_intent(question))
+    if latest and telemetry_enabled:
         telemetry_text = (
             f"温度={float(latest.temp) if latest.temp is not None else '未知'}; "
             f"湿度={float(latest.humidity) if latest.humidity is not None else '未知'}; "
@@ -1021,7 +1089,7 @@ def ask_qwen_science_assistant(
     messages = [
         {
             "role": "system",
-            "content": _science_system_prompt_qwen(user_role),
+            "content": _science_system_prompt_deepseek(user_role),
         }
     ]
 
@@ -1034,17 +1102,29 @@ def ask_qwen_science_assistant(
             }
         )
 
+    user_blocks = [
+        _xml_block("user_role", _science_role_label(user_role)),
+        _xml_block("user_question", question),
+    ]
+
+    if telemetry_text:
+        user_blocks.append(_xml_block("telemetry", telemetry_text))
+    else:
+        user_blocks.append(_xml_block("telemetry", "当前问题未触发大棚数据注入"))
+
+    if web_context:
+        user_blocks.append(_xml_block("search_results", web_context))
+    else:
+        user_blocks.append(_xml_block("search_results", "无"))
+
+    user_blocks.append(
+        "输出要求：若使用 search_results 信息，请在句子末尾使用 [n] 标注来源编号；"
+        "若未使用联网来源，不要添加来源编号。"
+    )
     messages.append(
         {
             "role": "user",
-            "content": (
-                f"提问角色：{_science_role_label(user_role)}\n"
-                f"问题：{question}\n"
-                f"当前大棚数据：{telemetry_text}\n"
-                f"联网参考：{web_context or '无'}\n"
-                "如果使用了联网参考，请在对应句子末尾标注 [n] 编号（仅使用参考中已有编号）；"
-                "若未使用联网参考，请不要添加来源编号。"
-            ),
+            "content": "\n\n".join(user_blocks),
         }
     )
 
@@ -1056,7 +1136,7 @@ def ask_qwen_science_assistant(
     }
 
     req = urllib.request.Request(
-        url=f"{settings.qwen_base_url.rstrip('/')}/chat/completions",
+        url=f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1070,10 +1150,10 @@ def ask_qwen_science_assistant(
             result = json.loads(resp.read().decode("utf-8"))
         answer = result.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not answer:
-            return build_rule_based_science_answer(question, latest, user_role=user_role), SOURCE_RULE_BASED
-        return answer, SOURCE_QWEN
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
-        return build_rule_based_science_answer(question, latest, user_role=user_role), SOURCE_RULE_BASED
+            raise RuntimeError("DeepSeek returned an empty answer")
+        return answer, SOURCE_PROVIDER
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
+        raise RuntimeError("DeepSeek request failed") from exc
 
 
 def _safe_list(value: Any) -> list[str]:
@@ -1403,16 +1483,29 @@ async def ask_science_assistant_with_options(
     )
 
     if enable_web_search:
+        answer, retried = await _retry_if_offline_claim(
+            answer=answer,
+            question=question,
+            latest=latest,
+            knowledge_context=knowledge_context,
+            has_knowledge_context=has_knowledge_context,
+            conversation_history=conversation_history,
+            user_role=user_role,
+            model_name=selected_model,
+            web_context=web_context,
+            max_tokens_override=max_tokens_override,
+        )
+
+        if _contains_offline_claim(answer):
+            citations = []
+            web_search_notice = "当前实时来源不足，AI 返回内容可能不含实时依据，请稍后重试。"
+        elif retried:
+            web_search_notice = "已自动重试并清理能力免责声明，仅保留基于来源的结论。"
+
         answer, citations, web_search_notice = align_citations_with_answer(
             answer=answer,
             citations=citations,
             web_search_notice=web_search_notice,
-        )
-        answer, citations, web_search_notice = _soften_offline_claim_for_weather(
-            answer,
-            question,
-            citations,
-            web_search_notice,
         )
 
     return (
@@ -1545,12 +1638,31 @@ async def stream_science_assistant_with_options(
         max_tokens_override=max_tokens_override,
     )
     if answer:
-        answer, citations, web_search_notice = _soften_offline_claim_for_weather(
-            answer,
-            question,
-            citations,
-            web_search_notice,
+        answer, retried = await _retry_if_offline_claim(
+            answer=answer,
+            question=question,
+            latest=latest,
+            knowledge_context=knowledge_context,
+            has_knowledge_context=has_knowledge_context,
+            conversation_history=conversation_history,
+            user_role=user_role,
+            model_name=selected_model,
+            web_context=web_context,
+            max_tokens_override=max_tokens_override,
         )
+        if _contains_offline_claim(answer):
+            citations = []
+            web_search_notice = "当前实时来源不足，AI 返回内容可能不含实时依据，请稍后重试。"
+        elif retried:
+            web_search_notice = "已自动重试并清理能力免责声明，仅保留基于来源的结论。"
+
+        if enable_web_search:
+            answer, citations, web_search_notice = align_citations_with_answer(
+                answer=answer,
+                citations=citations,
+                web_search_notice=web_search_notice,
+            )
+
         response_meta["citations"] = citations
         response_meta["web_search_notice"] = web_search_notice if enable_web_search else None
         response_meta["web_search_used"] = bool(enable_web_search and citations)

@@ -17,6 +17,7 @@
           <div class="actions">
             <el-button @click="router.push('/groups')">小组管理</el-button>
             <el-button @click="router.push('/plants')">植物档案</el-button>
+            <el-button @click="router.push('/market')">线下商城</el-button>
           </div>
         </el-card>
       </el-col>

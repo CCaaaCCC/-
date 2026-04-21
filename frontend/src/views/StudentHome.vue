@@ -20,6 +20,7 @@
           <div class="actions">
             <el-button type="success" @click="router.push('/monitor')">进入环境监控</el-button>
             <el-button @click="router.push('/teaching')">查看教学资源</el-button>
+            <el-button @click="router.push('/market')">线下商城</el-button>
           </div>
         </el-card>
       </el-col>

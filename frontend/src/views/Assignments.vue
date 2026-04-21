@@ -92,7 +92,7 @@
                     <el-option label="已批改" value="graded" />
                   </el-select>
                 </el-form-item>
-                <el-button type="primary" style="width: 100%" @click="loadAssignments">
+                <el-button type="primary" style="width: 100%" @click="applyFilters">
                   <el-icon><Search /></el-icon> 查询
                 </el-button>
               </el-form>
@@ -177,6 +177,18 @@
             :actionText="isTeacher ? '去布置任务' : '查看个人中心'"
             :actionRoute="isTeacher ? undefined : '/profile'"
             :actionCallback="isTeacher ? () => (showAssignmentDialog = true) : undefined"
+          />
+        </div>
+
+        <div v-if="!pageErrorDetail && pagination.total > 0" class="assignment-pagination">
+          <el-pagination
+            v-model:current-page="pagination.page"
+            v-model:page-size="pagination.page_size"
+            :total="pagination.total"
+            :page-sizes="[12, 24, 36]"
+            layout="total, sizes, prev, pager, next"
+            @current-change="handlePageChange"
+            @size-change="handlePageSizeChange"
           />
         </div>
       </div>
@@ -564,7 +576,8 @@ import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus';
 import StatusPanel from '../components/StatusPanel.vue';
 import AppTopBar from '../components/AppTopBar.vue';
 import { useCurrentUser } from '../composables/useCurrentUser';
-import { getErrorMessage } from '../utils/error';
+import { usePagination } from '../composables/usePagination';
+import { getActionErrorMessage, getHttpStatus, getErrorMessage } from '../utils/error';
 import {
   getAssignments,
   createAssignment,
@@ -578,6 +591,7 @@ import {
   getMySubmission,
   downloadSubmissionReport,
   type Assignment,
+  type AssignmentListResponse,
   type AssignmentAIFeedback,
   type AssignmentSubmission,
 } from '../api/assignments';
@@ -617,6 +631,7 @@ const classes = ref<any[]>([]);
 const devices = ref<any[]>([]);
 const loading = ref(false);
 const submitting = ref(false);
+const { pagination, setTotal, changePageSize, resetPage } = usePagination(1, 12);
 
 // 统计
 const stats = ref({
@@ -811,17 +826,51 @@ const buildStudentBaseParams = () => {
   return base;
 };
 
+const normalizeAssignmentListResponse = (
+  payload: Assignment[] | AssignmentListResponse,
+): AssignmentListResponse => {
+  if (Array.isArray(payload)) {
+    return {
+      items: payload,
+      total: payload.length,
+      page: 1,
+      page_size: payload.length || pagination.page_size,
+    };
+  }
+  return payload;
+};
+
+const getAssignmentTotalByQuery = async (params: Record<string, any>) => {
+  const response = await getAssignments({
+    ...params,
+    with_pagination: true,
+    page: 1,
+    page_size: 1,
+  });
+  return normalizeAssignmentListResponse(response).total;
+};
+
 const loadStudentStats = async () => {
   const base = buildStudentBaseParams();
-  const [allAssignments, pendingAssignments, gradedAssignments] = await Promise.all([
-    getAssignments({ ...base, status: 'all' }),
-    getAssignments({ ...base, status: 'pending' }),
-    getAssignments({ ...base, status: 'graded' })
+  const [total, pending, graded] = await Promise.all([
+    getAssignmentTotalByQuery({ ...base, status: 'all' }),
+    getAssignmentTotalByQuery({ ...base, status: 'pending' }),
+    getAssignmentTotalByQuery({ ...base, status: 'graded' }),
   ]);
 
+  stats.value.total = total;
+  stats.value.graded = graded;
+  stats.value.submitted = Math.max(0, total - pending);
+};
+
+const loadTeacherStats = async () => {
+  const params: any = {};
+  if (filterForm.value.class_id) params.class_id = filterForm.value.class_id;
+  const response = await getAssignments(params);
+  const allAssignments = Array.isArray(response) ? response : response.items;
   stats.value.total = allAssignments.length;
-  stats.value.graded = gradedAssignments.length;
-  stats.value.submitted = Math.max(0, allAssignments.length - pendingAssignments.length);
+  stats.value.submitted = allAssignments.reduce((sum, item: any) => sum + (item.submission_count || 0), 0);
+  stats.value.graded = allAssignments.filter((item: any) => (item.submission_count || 0) > 0).length;
 };
 
 const gradeForm = ref({
@@ -937,16 +986,38 @@ const loadAssignments = async (showError = true): Promise<boolean> => {
     if (!isTeacher.value && filterForm.value.status) {
       params.status = filterForm.value.status;
     }
-    const rawAssignments = await getAssignments(params);
-    assignments.value = rawAssignments
+
+    const requestedPage = pagination.page;
+    let normalized = normalizeAssignmentListResponse(
+      await getAssignments({
+        ...params,
+        with_pagination: true,
+        page: requestedPage,
+        page_size: pagination.page_size,
+      }),
+    );
+    setTotal(normalized.total);
+
+    if (pagination.page !== requestedPage) {
+      normalized = normalizeAssignmentListResponse(
+        await getAssignments({
+          ...params,
+          with_pagination: true,
+          page: pagination.page,
+          page_size: pagination.page_size,
+        }),
+      );
+      setTotal(normalized.total);
+    }
+
+    assignments.value = normalized.items
       .filter((item: Assignment | null | undefined): item is Assignment => Boolean(item && item.id))
       .map((item) => sanitizeAssignment(item));
+
     if (!isTeacher.value) {
       await loadStudentStats();
     } else {
-      stats.value.total = assignments.value.length;
-      stats.value.submitted = assignments.value.reduce((sum, item: any) => sum + (item.submission_count || 0), 0);
-      stats.value.graded = assignments.value.filter((item: any) => (item.submission_count || 0) > 0).length;
+      await loadTeacherStats();
     }
     return true;
   } catch (error: any) {
@@ -972,6 +1043,21 @@ const loadAssignments = async (showError = true): Promise<boolean> => {
   }
 };
 
+const applyFilters = () => {
+  resetPage();
+  loadAssignments();
+};
+
+const handlePageSizeChange = (size: number) => {
+  changePageSize(size);
+  loadAssignments();
+};
+
+const handlePageChange = (page: number) => {
+  pagination.page = page;
+  loadAssignments();
+};
+
 const toggleAssignmentPublish = async (assignment: Assignment) => {
   if (!assignment.can_manage) {
     ElMessage.warning('该任务为只读模式，无法变更发布状态');
@@ -988,7 +1074,10 @@ const toggleAssignmentPublish = async (assignment: Assignment) => {
     await loadAssignments(false);
   } catch (error: any) {
     if (error !== 'cancel') {
-      ElMessage.error(getErrorMessage(error, '操作失败'));
+      ElMessage.error(getActionErrorMessage(error, {
+        action: '切换任务发布状态',
+        fallback: '切换发布状态失败，请稍后重试',
+      }));
     }
   } finally {
     submitting.value = false;
@@ -1053,8 +1142,14 @@ const viewAssignment = async (assignment: Assignment) => {
           : toLocalDateString();
         hydrateSubmissionPhotos((submission as any).photos || null);
       }
-    } catch (error) {
-      // 未找到提交记录，正常
+    } catch (error: unknown) {
+      const status = getHttpStatus(error);
+      if (status !== 404) {
+        ElMessage.error(getActionErrorMessage(error, {
+          action: '加载我的提交记录',
+          fallback: '加载提交记录失败，请稍后重试',
+        }));
+      }
     }
   }
 };
@@ -1511,6 +1606,12 @@ watch(showDetailDialog, (visible) => {
   min-width: 0;
 }
 
+.assignment-pagination {
+  margin-top: var(--space-4);
+  display: flex;
+  justify-content: flex-end;
+}
+
 .assignment-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -1548,6 +1649,7 @@ watch(showDetailDialog, (visible) => {
   font-size: 14px;
   margin: 0 0 12px 0;
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;

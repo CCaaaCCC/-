@@ -23,6 +23,15 @@ def hash_password(password: str) -> str:
     return _hash_password(password)
 
 
+def generate_invite_code(db, length: int = 8) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    while True:
+        code = "".join(secrets.choice(alphabet) for _ in range(length))
+        exists = db.query(Class).filter(Class.invite_code == code).first()
+        if not exists:
+            return code
+
+
 def init_db():
     """初始化数据库"""
     print("🔄 正在初始化数据库...")
@@ -84,6 +93,7 @@ def init_db():
             grade="三年级",
             teacher_id=teacher.id,
             description="第一个班级",
+            invite_code=generate_invite_code(db),
             is_active=True
         )
         db.add(class1)

@@ -25,7 +25,7 @@ const FloatingAIAssistant = defineAsyncComponent(() => import('./components/Floa
 
 const route = useRoute();
 const isFullScreenPage = computed(() => {
-  return ['Login', 'DashboardDisplay', 'HomeRedirect'].includes(route.name?.toString() || '');
+  return ['Login', 'Register', 'DashboardDisplay', 'HomeRedirect'].includes(route.name?.toString() || '');
 });
 </script>
 

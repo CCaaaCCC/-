@@ -8,6 +8,7 @@ import App from './App.vue'
 import router from './router'
 import { initTheme } from './composables/useTheme'
 import { installRuntimeGuards } from './utils/runtimeGuards'
+import lazyDirective from './directives/lazy'
 
 initTheme()
 installRuntimeGuards()
@@ -24,4 +25,5 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 
 app.use(ElementPlus)
 app.use(router)
+app.directive('lazy', lazyDirective)
 app.mount('#app')

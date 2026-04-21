@@ -90,7 +90,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { House, Monitor, Document, UserFilled, Connection, TrendCharts, SwitchButton, User, ArrowDown, Check } from '@element-plus/icons-vue';
+import { House, Monitor, Document, UserFilled, Connection, TrendCharts, SwitchButton, User, ArrowDown, Check, ShoppingCart } from '@element-plus/icons-vue';
 import { logoutUser } from '../api';
 import { ElMessage } from 'element-plus';
 import NotificationBell from './NotificationBell.vue';
@@ -123,6 +123,7 @@ const allNavItems = [
   { path: `/home/${role}`, label: '首页概览', icon: House, roles: ['admin', 'teacher', 'student'] },
   { path: '/monitor', label: '大棚监控', icon: Monitor, roles: ['admin', 'teacher', 'student'] },
   { path: '/teaching', label: '教学资源', icon: Document, roles: ['admin', 'teacher', 'student'] },
+  { path: '/market', label: '线下商城', icon: ShoppingCart, roles: ['admin', 'teacher', 'student'] },
   { path: '/assignments', label: '实验报告', icon: Document, roles: ['admin', 'teacher', 'student'] },
   { path: '/plants', label: '植物生长', icon: TrendCharts, roles: ['admin', 'teacher', 'student'] },
   { path: '/groups', label: '学习小组', icon: UserFilled, roles: ['admin', 'teacher', 'student'] },
