@@ -86,6 +86,18 @@
             </div>
           </div>
 
+          <div class="camera-section">
+            <h3>📷 监控画面</h3>
+            <div v-if="device.has_camera" class="camera-frame">
+              <img
+                :src="cameraStreamUrl"
+                class="camera-feed"
+                alt="大棚监控画面"
+              />
+            </div>
+            <div v-else class="camera-empty">当前设备未绑定摄像头</div>
+          </div>
+
           <!-- 植物档案 -->
           <div class="plants-section">
             <h3>🌱 植物档案</h3>
@@ -136,14 +148,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { init, use, graphic } from 'echarts/core';
 import { LineChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, TitleComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { ECharts } from 'echarts/core';
-import api from '../api/index';
+import api, { getCameraStreamUrl } from '../api/index';
 import { useTheme } from '../composables/useTheme';
 
 use([LineChart, GridComponent, TooltipComponent, TitleComponent, CanvasRenderer]);
@@ -202,7 +214,14 @@ const device = ref({
   status: 1,
   pump_state: 0,
   fan_state: 0,
-  light_state: 0
+  light_state: 0,
+  has_camera: false
+});
+const cameraStreamUrl = computed(() => {
+  if (!device.value.has_camera) {
+    return '';
+  }
+  return getCameraStreamUrl(activeDeviceId.value, { public: true });
 });
 const plants = ref<any[]>([]);
 const recentRecords = ref<Array<{
@@ -403,7 +422,8 @@ const loadTelemetry = async () => {
       status: data.device.status,
       pump_state: data.device.pump_state,
       fan_state: data.device.fan_state,
-      light_state: data.device.light_state
+      light_state: data.device.light_state,
+      has_camera: Boolean(data.device.has_camera)
     };
   }
   if (data.plants) {
@@ -752,6 +772,36 @@ onUnmounted(() => {
 
 .status-item.active .status-value {
   color: var(--el-color-success);
+}
+
+.camera-section h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.camera-frame {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f1722;
+  min-height: 180px;
+}
+
+.camera-feed {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: cover;
+  background: #000;
+}
+
+.camera-empty {
+  border: 1px dashed var(--el-border-color);
+  border-radius: 10px;
+  padding: 14px;
+  color: var(--text-tertiary);
+  text-align: center;
+  font-size: 14px;
 }
 
 .plants-section h3 {

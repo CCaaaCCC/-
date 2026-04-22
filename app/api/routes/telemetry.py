@@ -1,4 +1,5 @@
 import csv
+import asyncio
 import datetime
 import io
 import json
@@ -6,10 +7,10 @@ import logging
 import re
 import time
 import urllib.parse
-from typing import List
+from typing import AsyncIterator, List
 
 import pandas as pd
-from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, inspect
 from sqlalchemy.exc import OperationalError
@@ -61,6 +62,91 @@ router = APIRouter()
 telemetry_hub = TelemetryHub()
 logger = logging.getLogger(__name__)
 DEFAULT_CONVERSATION_TITLE = "新对话"
+CAMERA_MAX_FRAME_BYTES = 512 * 1024
+CAMERA_FRAME_TTL_SECONDS = 20
+CAMERA_STREAM_BOUNDARY = "frame"
+CAMERA_STREAM_IDLE_SECONDS = 0.2
+camera_frames: dict[int, dict[str, object]] = {}
+camera_frames_lock = asyncio.Lock()
+
+
+def _extract_bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    parts = authorization.strip().split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    token = parts[1].strip()
+    return token or None
+
+
+def _resolve_camera_stream_user(db: Session, token: str | None, authorization: str | None) -> User:
+    auth_token = token or _extract_bearer_token(authorization)
+    user = get_user_by_token(auth_token, db) if auth_token else None
+    if not user:
+        raise HTTPException(status_code=401, detail="未授权访问摄像头流")
+    return user
+
+
+async def _set_camera_frame(device_id: int, frame_bytes: bytes) -> None:
+    async with camera_frames_lock:
+        camera_frames[device_id] = {
+            "frame_bytes": frame_bytes,
+            "updated_at": time.time(),
+        }
+
+
+async def _get_camera_frame(device_id: int) -> tuple[bytes | None, float | None]:
+    async with camera_frames_lock:
+        payload = camera_frames.get(device_id)
+    if not payload:
+        return None, None
+
+    frame_bytes = payload.get("frame_bytes")
+    updated_at = payload.get("updated_at")
+
+    if not isinstance(frame_bytes, (bytes, bytearray)) or not isinstance(updated_at, (int, float)):
+        return None, None
+
+    if (time.time() - float(updated_at)) > CAMERA_FRAME_TTL_SECONDS:
+        return None, None
+
+    return bytes(frame_bytes), float(updated_at)
+
+
+async def _camera_mjpeg_generator(device_id: int) -> AsyncIterator[bytes]:
+    last_sent_at = 0.0
+    while True:
+        frame_bytes, updated_at = await _get_camera_frame(device_id)
+        if frame_bytes is None or updated_at is None:
+            await asyncio.sleep(CAMERA_STREAM_IDLE_SECONDS)
+            continue
+
+        if updated_at <= last_sent_at:
+            await asyncio.sleep(CAMERA_STREAM_IDLE_SECONDS)
+            continue
+
+        last_sent_at = updated_at
+        header = (
+            f"--{CAMERA_STREAM_BOUNDARY}\r\n"
+            "Content-Type: image/jpeg\r\n"
+            f"Content-Length: {len(frame_bytes)}\r\n\r\n"
+        ).encode("ascii")
+        yield header + frame_bytes + b"\r\n"
+        await asyncio.sleep(0.02)
+
+
+def _build_camera_stream_response(device_id: int) -> StreamingResponse:
+    return StreamingResponse(
+        _camera_mjpeg_generator(device_id),
+        media_type=f"multipart/x-mixed-replace; boundary={CAMERA_STREAM_BOUNDARY}",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _ensure_ai_conversation_schema_ready(db: Session) -> None:
@@ -313,6 +399,66 @@ async def receive_telemetry(
         raise HTTPException(status_code=400, detail="遥测数据处理失败，请检查上报格式")
 
 
+@router.post("/api/devices/{device_id}/camera")
+async def upload_camera_frame(
+    device_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    x_device_token: str = Header(None),
+):
+    if x_device_token != settings.device_token:
+        raise HTTPException(status_code=401, detail="设备认证失败")
+
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="设备不存在")
+
+    content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type and content_type not in {"image/jpeg", "image/jpg", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="仅支持 JPEG 图片上传")
+
+    frame_bytes = await request.body()
+    if not frame_bytes:
+        raise HTTPException(status_code=400, detail="未接收到图片数据")
+    if len(frame_bytes) > CAMERA_MAX_FRAME_BYTES:
+        raise HTTPException(status_code=413, detail=f"图片体积过大，最大支持 {CAMERA_MAX_FRAME_BYTES // 1024}KB")
+
+    await _set_camera_frame(device_id, frame_bytes)
+
+    if not device.has_camera:
+        device.has_camera = True
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("failed to persist has_camera for device %s: %s", device_id, exc)
+
+    return {
+        "status": "success",
+        "device_id": device_id,
+        "bytes": len(frame_bytes),
+    }
+
+
+@router.get("/api/devices/{device_id}/camera/stream")
+async def stream_camera(
+    device_id: int,
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    current_user = _resolve_camera_stream_user(db, token, authorization)
+
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    if not device.has_camera:
+        raise HTTPException(status_code=404, detail="该设备未启用摄像头")
+
+    require_can_access_device_history(db, current_user, device_id)
+    return _build_camera_stream_response(device_id)
+
+
 @router.get("/api/legacy/history/{device_id}", response_model=List[TelemetryResponse])
 async def get_history(device_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     device = db.query(Device).filter(Device.id == device_id).first()
@@ -355,6 +501,7 @@ async def create_device(
         fan_speed=device_data.fan_speed if device_data.fan_speed is not None else 100,
         light_state=device_data.light_state,
         light_brightness=device_data.light_brightness if device_data.light_brightness is not None else 100,
+        has_camera=bool(device_data.has_camera),
     )
     db.add(new_device)
     db.commit()
@@ -1170,6 +1317,16 @@ async def get_public_history(device_id: int, limit: int = 20, db: Session = Depe
     return readings
 
 
+@router.get("/api/public/devices/{device_id}/camera/stream")
+async def stream_public_camera(device_id: int, db: Session = Depends(get_db)):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    if not device.has_camera:
+        raise HTTPException(status_code=404, detail="该设备未启用摄像头")
+    return _build_camera_stream_response(device_id)
+
+
 @router.get("/api/public/display")
 async def get_display_data(device_id: int = 1, db: Session = Depends(get_db)):
     device = db.query(Device).filter(Device.id == device_id).first()
@@ -1214,6 +1371,10 @@ async def get_display_data(device_id: int = 1, db: Session = Depends(get_db)):
             "pump_state": device.pump_state,
             "fan_state": device.fan_state,
             "light_state": device.light_state,
+            "has_camera": bool(device.has_camera),
+            "camera_stream_path": (
+                f"/api/public/devices/{device.id}/camera/stream" if device.has_camera else None
+            ),
         },
         "telemetry": {
             "temp": float(latest_reading.temp) if latest_reading and latest_reading.temp is not None else None,

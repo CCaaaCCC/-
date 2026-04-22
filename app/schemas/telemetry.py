@@ -28,6 +28,7 @@ class DeviceResponse(BaseModel):
     fan_speed: int = Field(100, ge=0, le=100)
     light_state: int
     light_brightness: int = Field(100, ge=0, le=100)
+    has_camera: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -39,6 +40,7 @@ class DeviceCreateRequest(BaseModel):
     fan_speed: Optional[int] = Field(100, ge=0, le=100)
     light_state: Optional[int] = 0
     light_brightness: Optional[int] = Field(100, ge=0, le=100)
+    has_camera: Optional[bool] = False
 
 
 class ControlRequest(BaseModel):

@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-04-21 — 新增 ESP32-CAM 轻量视频监控
+
+- 新增：设备摄像头元数据。
+  - `app/db/models.py`：`Device` 增加 `has_camera` 字段（默认 false）。
+  - `app/schemas/telemetry.py`：`DeviceResponse`、`DeviceCreateRequest` 增加 `has_camera`。
+  - `alembic/versions/0010_device_camera_support.py`：新增迁移脚本，向 `devices` 表加列。
+
+- 新增：后端摄像头接口（快照上传 + MJPEG 分发）。
+  - `app/api/routes/telemetry.py`：
+    - `POST /api/devices/{device_id}/camera`（设备 token 鉴权，上传 JPEG 快照）
+    - `GET /api/devices/{device_id}/camera/stream`（私有流，支持 Bearer 或 query token）
+    - `GET /api/public/devices/{device_id}/camera/stream`（公开流，供大屏展示）
+  - 后端采用内存缓存最近帧并设置 TTL，避免落盘 IO 与数据库写入压力。
+
+- 新增：前端监控页面画面接入。
+  - `frontend/src/components/Dashboard.vue`：大棚监控页新增“监控画面”卡片，随设备切换自动切流。
+  - `frontend/src/views/DashboardDisplay.vue`：公开大屏新增摄像头画面区域。
+  - `frontend/src/api/index.ts`：新增 `getCameraStreamUrl(...)`，并扩展 `Device` 类型。
+
+- 新增：硬件独立固件。
+  - `esp32_cam_snapshot.ino`：ESP32-CAM(OV2640) 独立快照上报程序，默认每秒上传一帧。
+
 ## 2026-04-21 — 文档全面更新
 
 - 重构：项目文档体系全面更新，确保准确反映当前项目状态。
@@ -138,6 +160,7 @@
 | 0007 | 角色 owner 权限（created_by 字段） | 2026-04 |
 | 0008 | 商城标签 | 2026-04 |
 | 0009 | 设备执行器级别 | 2026-04 |
+| 0010 | 设备摄像头支持（has_camera） | 2026-04-21 |
 
 ---
 

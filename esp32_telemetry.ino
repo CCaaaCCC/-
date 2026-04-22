@@ -3,10 +3,11 @@
 #include <ArduinoJson.h>
 
 // --- 配置区域 ---
-const char* ssid = "您的WiFi名称";
-const char* password = "您的WiFi密码";
-// 后端服务器地址 (请修改为运行 FastAPI 的电脑在局域网的 IP)
-const char* serverUrl = "http://192.168.1.100:8000/api/telemetry"; 
+const char* ssid = "我的手机热点";
+const char* password = "22271000";
+// 云端入口（通过 Nginx 反向代理到后端 /api）
+const char* serverUrl = "http://47.80.57.231/api/telemetry";
+const char* deviceToken = "2bb0d8225dead4b24f3add842aa31a4a0b87c3ee8d1472d3b745631772986e2c";
 const int deviceId = 1;
 
 // --- 全局变量 (用于模拟平滑波动) ---
@@ -72,9 +73,13 @@ void loop() {
 
       // 发送 HTTP POST 请求
       HTTPClient http;
-      http.begin(serverUrl);
+      if (!http.begin(serverUrl)) {
+        Serial.println("HTTP begin failed");
+        lastTime = millis();
+        return;
+      }
       http.addHeader("Content-Type", "application/json");
-        http.addHeader("X-Device-Token", "default_secret_device_token");
+      http.addHeader("X-Device-Token", deviceToken);
       Serial.print("Sending Data: ");
       Serial.println(jsonOutput);
 

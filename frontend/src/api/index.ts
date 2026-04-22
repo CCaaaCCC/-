@@ -79,6 +79,23 @@ export const resolveBackendAssetUrl = (raw?: string): string => {
     return `${AUTH_BASE_URL}${normalized}`;
 };
 
+export const getCameraStreamUrl = (
+    deviceId: number,
+    options?: { public?: boolean }
+): string => {
+    const base = getBackendOrigin();
+    if (options?.public) {
+        return `${base}/api/public/devices/${deviceId}/camera/stream`;
+    }
+
+    const token = getAuthToken();
+    const url = new URL(`${base}/api/devices/${deviceId}/camera/stream`);
+    if (token) {
+        url.searchParams.set('token', token);
+    }
+    return url.toString();
+};
+
 // Create axios instance with base URL pointing to the backend
 const api = axios.create({
     baseURL: API_BASE_URL,
@@ -256,6 +273,7 @@ export interface Device {
     fan_speed: number;
     light_state: number;
     light_brightness: number;
+    has_camera?: boolean;
 }
 
 export interface ControlRequest {
@@ -274,6 +292,7 @@ export interface DeviceCreateRequest {
     fan_speed?: number;
     light_state?: number;
     light_brightness?: number;
+    has_camera?: boolean;
 }
 
 export interface Assignment {

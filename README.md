@@ -22,6 +22,7 @@
 - **实时数据**：5 秒刷新，WebSocket 毫秒级推送
 - **远程控制**：水泵、风扇、植物灯开关与强度调节
 - **数据导出**：CSV / Excel，最多 31 天
+- **视频监控（轻量）**：ESP32-CAM(OV2640) 每秒快照上传，后端内存代理为 MJPEG 流
 - **可视化**：ECharts 动态图表（温湿度、土壤、光照）
 - **设备微孪生**：CSS/Vue 动画呈现温室设备实时状态
 
@@ -159,6 +160,10 @@ npm run dev
 
 # 模拟 ESP32 数据（可选，新终端）
 python simulate_esp32.py
+
+# ESP32-CAM 快照监控（可选，新终端）
+# 先修改 esp32_cam_snapshot.ino 里的 WiFi、API_BASE_URL、DEVICE_TOKEN、DEVICE_ID
+# 再用 Arduino IDE 上传到 ESP32-CAM
 ```
 
 ### 访问地址
@@ -300,6 +305,7 @@ d:\4C\
 │
 ├── esp32_telemetry.ino              # ESP32 遥测代码
 ├── esp32_plant_monitor_uart.ino     # ESP32 植物监测代码
+├── esp32_cam_snapshot.ino           # ESP32-CAM 快照上传代码
 └── init_db.py, reset_admin_password.py, clear_contents.py  # 工具脚本
 ```
 
@@ -332,10 +338,12 @@ d:\4C\
 | 方法 | 端点 | 权限 | 说明 |
 |------|------|------|------|
 | POST | `/api/telemetry` | Device Token | ESP32 上报数据 |
+| POST | `/api/devices/{device_id}/camera` | Device Token | ESP32-CAM 上传 JPEG 快照 |
 | GET | `/api/devices` | 认证 | 设备列表 |
 | POST | `/api/devices` | 管理员 | 创建设备 |
 | GET | `/api/history/{device_id}` | 认证 | 历史数据（最近 20 条） |
 | POST | `/api/control/{device_id}` | 教师/管理员 | 远程控制 |
+| GET | `/api/devices/{device_id}/camera/stream` | 认证（Bearer 或 token 查询参数） | 私有摄像头流（MJPEG） |
 | POST | `/api/telemetry/export` | 认证 | 导出 CSV/Excel（≤31 天） |
 | WS | `/ws/telemetry/{device_id}` | 认证 | 实时数据推送 |
 
@@ -364,6 +372,7 @@ AI 问答请求体支持：`enable_deep_thinking`（切换 reasoner 模型）、
 |------|------|------|------|
 | GET | `/api/public/display` | 公开 | 大屏实时数据 |
 | GET | `/api/public/history/{device_id}` | 公开 | 大屏趋势历史 |
+| GET | `/api/public/devices/{device_id}/camera/stream` | 公开 | 大屏摄像头流（MJPEG） |
 
 ### 教学内容
 

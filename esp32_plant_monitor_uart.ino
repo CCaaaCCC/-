@@ -10,10 +10,10 @@
 // ===================== 网络与后端配置 =====================
 static const char* WIFI_SSID = "我的个人热点";
 static const char* WIFI_PASSWORD = "22271000";
-// 请改成你的后端电脑在同一局域网的 IP
-static const char* SERVER_URL = "http://192.168.1.100:8000/api/telemetry";
-static const char* DEVICE_TOKEN = "default_secret_device_token";
-static const int DEVICE_ID = 2;
+// 云端入口（通过 Nginx 反向代理到后端 /api）
+static const char* SERVER_URL = "http://47.80.57.231/api/telemetry";
+static const char* DEVICE_TOKEN = "2bb0d8225dead4b24f3add842aa31a4a0b87c3ee8d1472d3b745631772986e2c";
+static const int DEVICE_ID = 1;
 
 // ===================== 传感器引脚 =====================
 static const int PIN_DHT = 4;
@@ -34,6 +34,7 @@ static const int LIGHT_PIXEL_COUNT = 8;
 // ===================== 设备配置 =====================
 static const uint32_t DEBUG_BAUD = 115200;
 static const uint32_t SAMPLE_INTERVAL_MS = 3000;
+static const uint32_t HTTP_TIMEOUT_MS = 8000;
 static const int ADC_SAMPLES = 12;
 
 // DHT11 配置
@@ -183,7 +184,11 @@ bool postTelemetryAndPullCommand(float tempC, float hum, float soilPct, float li
   serializeJson(reqDoc, reqBody);
 
   HTTPClient http;
-  http.begin(SERVER_URL);
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  if (!http.begin(SERVER_URL)) {
+    Serial.println("HTTP begin 失败");
+    return false;
+  }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Token", DEVICE_TOKEN);
 
@@ -253,7 +258,8 @@ void setup() {
   analogSetPinAttenuation(PIN_LIGHT, ADC_11db);
 
   pinMode(PIN_PUMP, OUTPUT);
-  digitalWrite(PIN_PUMP, LOW);
+  const uint8_t pumpOffLevel = (PUMP_ACTIVE_LEVEL == HIGH) ? LOW : HIGH;
+  digitalWrite(PIN_PUMP, pumpOffLevel);
 
   ledcSetup(FAN_PWM_CHANNEL, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
   ledcAttachPin(PIN_FAN_PWM, FAN_PWM_CHANNEL);

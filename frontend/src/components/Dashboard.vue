@@ -228,6 +228,26 @@
         </div>
       </el-card>
 
+      <el-card class="camera-card mb-4" shadow="hover">
+        <template #header>
+          <div class="card-header">
+            <span>大棚监控画面</span>
+            <el-tag :type="hasCamera ? 'success' : 'info'" size="small" effect="light">
+              {{ hasCamera ? '摄像头在线' : '未绑定摄像头' }}
+            </el-tag>
+          </div>
+        </template>
+
+        <div v-if="hasCamera && cameraStreamUrl" class="camera-stage">
+          <img
+            :src="cameraStreamUrl"
+            class="camera-feed"
+            alt="大棚实时监控画面"
+          />
+        </div>
+        <el-empty v-else description="当前设备未绑定摄像头" :image-size="76" />
+      </el-card>
+
       <!-- Charts -->
       <div class="charts-grid">
         <TelemetryChart
@@ -274,6 +294,7 @@ import {
   askScienceAssistant,
   streamScienceAssistant,
   createTelemetrySocket,
+  getCameraStreamUrl,
   type Device,
   type Telemetry,
   type TelemetryRealtimePayload
@@ -489,6 +510,20 @@ const userRoleText = computed(() => {
 
 const canControl = computed(() => {
   return ['teacher', 'admin'].includes(userRole.value);
+});
+
+const selectedDevice = computed(() => {
+  if (!selectedDeviceId.value) return null;
+  return devices.value.find((item) => item.id === selectedDeviceId.value) || null;
+});
+
+const hasCamera = computed(() => Boolean(selectedDevice.value?.has_camera));
+
+const cameraStreamUrl = computed(() => {
+  if (!selectedDeviceId.value || !hasCamera.value) {
+    return '';
+  }
+  return getCameraStreamUrl(selectedDeviceId.value);
 });
 
 const isControlLocked = computed(() => {
@@ -1561,11 +1596,28 @@ onUnmounted(() => {
 }
 
 .sensor-card,
+.camera-card,
 .ai-panel,
 .student-missions,
 .teacher-panel,
 .control-card {
   border-radius: 14px;
+}
+
+.camera-stage {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-light);
+  background: #0f1722;
+  min-height: 220px;
+}
+
+.camera-feed {
+  display: block;
+  width: 100%;
+  max-height: 460px;
+  object-fit: cover;
+  background: #000;
 }
 
 .sensor-card {
@@ -1741,6 +1793,10 @@ onUnmounted(() => {
 
   .charts-grid {
     grid-template-columns: 1fr;
+  }
+
+  .camera-feed {
+    max-height: 280px;
   }
 
   .control-grid {

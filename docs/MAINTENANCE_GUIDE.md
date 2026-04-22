@@ -98,8 +98,8 @@ python -m alembic revision -m "your_migration_name"
 - 优先使用增量迁移，不要直接修改历史迁移文件
 - 涉及线上字段变更时，先做向后兼容（可空字段、默认值）
 - 迁移后必须执行一次关键页面冒烟（登录、教学内容、作业、AI）
-- 当前迁移版本 head: `0009_device_actuator_levels`
-- 迁移脚本位于 `alembic/versions/`，共 9 个版本
+- 当前迁移版本 head: `0010_device_camera_support`
+- 迁移脚本位于 `alembic/versions/`，共 10 个版本
 
 ### 4.4 迁移版本历史
 
@@ -114,6 +114,7 @@ python -m alembic revision -m "your_migration_name"
 | 0007 | 角色 owner 权限（created_by 字段） |
 | 0008 | 商城标签 |
 | 0009 | 设备执行器级别 |
+| 0010 | 设备摄像头支持（has_camera） |
 
 ## 5. AI 模块维护要点
 
@@ -256,7 +257,28 @@ python -m alembic revision -m "your_migration_name"
 8. AI 会话链路可用（新建/切换/重命名/删除/置顶/会话内问答与流式）
 9. AI 最小回归脚本通过（`python scripts/ai_regression_probe.py`，按需启用 strict 参数）
 10. 稳定性专项脚本通过（`python scripts/stability_regression_probe.py`）
-11. 关键文档同步更新（README、本文档、变更说明）
+11. 摄像头链路检查通过（设备快照上传、监控页出图、大屏出图）
+12. 关键文档同步更新（README、本文档、变更说明）
+
+### 9.1 摄像头功能快速回归
+
+适用场景：`ESP32-CAM + OV2640` 快照流模式。
+
+后端接口联通测试（示例）：
+```powershell
+# 1) 上传一张测试 JPEG
+curl -X POST "http://127.0.0.1:8000/api/devices/1/camera" \
+	-H "X-Device-Token: <DEVICE_TOKEN>" \
+	-H "Content-Type: image/jpeg" \
+	--data-binary "@test.jpg"
+
+# 2) 打开公开流（浏览器）
+http://127.0.0.1:8000/api/public/devices/1/camera/stream
+```
+
+页面检查：
+- 登录后打开监控页 `Dashboard.vue`，切到已绑定摄像头的设备应可看到实时画面。
+- 打开公开大屏 `DashboardDisplay.vue?device_id=<id>`，应可看到同一设备画面。
 
 ## 10. 常见问题排查
 
